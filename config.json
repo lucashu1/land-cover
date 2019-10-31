@@ -1,0 +1,55 @@
+{
+    "verbose": 1,
+    "dataset_dir": "/data/datasets/sen12ms",
+    "model_save_dir": "/home/lucas/land-cover/saved_models",
+    "results_dir": "/home/lucas/land-cover/results",
+    "num_scenes_total": 252,
+    "s2_input_bands": [
+        "blue", "green", "red",
+        "re1", "re2", "re3",
+        "nir1", "nir2",
+        "swir1", "swir2"
+    ],
+    "landuse_class_descriptions": {
+        "1": "Barren",
+        "2": "Permanent Snow and Ice",
+        "3": "Water Bodies",
+        "9": "Urban and Built-Up Lands",
+        "10": "Dense Forests",
+        "20": "Open Forests",
+        "25": "Forest/Cropland Mosaics",
+        "30": "Natural Herbaceous",
+        "35": "Natural Herbaceous/Croplands Mosaics",
+        "36": "Herbaceous Croplands",
+        "40": "Shrublands"
+    },
+    "landuse_class_mappings": {
+        "25": 20,
+        "36": 30,
+        "35": 30
+    },
+    "experiment_params": {
+        "num_models_per_season": 5,
+        "train_scene_sampling_seed": 0,
+        "num_eval_scenes_per_season": 10,
+        "eval_scene_sampling_seed": 1,
+        "val_split_seed": 10
+    },
+    "training_params": {
+        "learning_rate": 0.0005,
+        "subpatch_size": 64,
+        "batch_size": 128,
+        "val_size": 0.20,
+        "max_epochs": 200,
+        "early_stopping_patience": 10
+    },
+    "lr_reducer_params": {
+       "factor": 0.316,
+       "cooldown": 0,
+       "patience": 5,
+       "min_lr": 0.0000005
+    },
+    "resnet_params": {
+        "depth": 20
+    }
+}
