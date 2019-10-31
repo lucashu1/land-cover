@@ -8,3 +8,7 @@ CNNs for land cover mapping
 4. `git clone https://github.com/titu1994/DenseNet`
 5. Download and extract SEN12MS dataset: https://arxiv.org/abs/1906.07789
 6. Edit dataset paths in `config.json`
+
+### Usage Instructions
+* Train models: `python classify.py -c config.json --train`
+* Evaluate models: `python classify.py -c config.json --test`
