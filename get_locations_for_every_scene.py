@@ -17,8 +17,10 @@ from sen12ms_dataLoader import SEN12MSDataset, Seasons, Sensor, S1Bands, S2Bands
 sen12ms = SEN12MSDataset("/data/datasets/sen12ms")
 all_seasons = ["ROIs1158_spring", "ROIs1868_summer", "ROIs1970_fall", "ROIs2017_winter"]
 
+API_KEY = None #TODO: fill this in
+
 # google Maps geolocator
-geolocator = GoogleV3(api_key='AIzaSyAgFLt0fcqdvcKV_YWdPb46LUbCx0biaKg')
+geolocator = GoogleV3(api_key=API_KEY)
 
 # country short_name --> continent dict
 continents_path = './continents.json'
