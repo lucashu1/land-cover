@@ -4,4 +4,6 @@ retired_scripts/*
 saved_models/*
 CBAM-keras/*
 DenseNet/*
+CBAM-keras
+DenseNet
 
