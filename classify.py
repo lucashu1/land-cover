@@ -65,7 +65,19 @@ def get_label_encoder(config):
     label_encoder.classes_ = np.array(class_nums_sorted)
     return label_encoder
 
-def get_subpatches(patches, config):
+def patch_to_subpatches(patch, config):
+    '''
+    Input: single patch: B, W, H
+    Output: N, B, subpatch_size, subpatch_size
+    '''
+    subpatch_size = config['training_params']['subpatch_size']
+    subpatches = view_as_blocks(patch, \
+        block_shape=(subpatch_size, subpatch_size, patch.shape[-1]))
+    subpatches = np.squeeze(subpatches)
+    subpatches = np.concatenate(subpatches, axis=0)
+    return subpatches
+
+def scene_to_subpatches(patches, config):
     '''
     Split square patches into smaller squre sub-patches
     Input: patches of shape D, B, W, H
@@ -75,12 +87,7 @@ def get_subpatches(patches, config):
     subpatch_size = config['training_params']['subpatch_size']
     all_subpatches = [] # list of each patch's subpatch array
     for i, patch in enumerate(patches):
-        # 2D subpatch grid
-        subpatches = view_as_blocks(patch, \
-            block_shape=(subpatch_size, subpatch_size, patches.shape[-1]))
-        subpatches = np.squeeze(subpatches)
-        # flatten subpatch grid
-        subpatches = np.concatenate(subpatches, axis=0)
+        subpatches = patch_to_subpatches(patch, config)
         all_subpatches.append(subpatches)
     # concat all subpatches
     return np.concatenate(all_subpatches, axis=0)
@@ -137,8 +144,8 @@ def preprocess_s2_lc(s2, lc, config, label_encoder):
     # move bands to last axis
     s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
     # get subpatches
-    s2 = get_subpatches(s2, config)
-    lc = get_subpatches(lc, config)
+    s2 = scene_to_subpatches(s2, config)
+    lc = scene_to_subpatches(lc, config)
     # get majority classes
     labels = get_landuse_labels(lc, config)
     # remove instances with '0' mode label
@@ -370,7 +377,6 @@ def train_models_for_each_season(config):
     Output: saved Keras models (on disk)
     '''
     sen12ms = SEN12MSDataset(config['dataset_dir'])
-    label_encoder = get_label_encoder(config)
     for season in ALL_SEASONS:
         # sample N scenes from this season
         scene_ids = list(sen12ms.get_scene_ids(season))

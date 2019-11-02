@@ -1,8 +1,11 @@
 {
     "verbose": 1,
     "dataset_dir": "/data/datasets/sen12ms",
+    "subpatches_dataset_dir":"/data/datasets/sen12ms_subpatches",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "results_dir": "/home/lucas/land-cover/results",
+    "continents_json_path":"/home/lucas/land-cover/continents.json",
+    "scene_locations_json_path":"/home/lucas/land-cover/all_scene_locations.json",
     "num_scenes_total": 252,
     "s2_input_bands": [
         "blue", "green", "red",
