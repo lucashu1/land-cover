@@ -23,9 +23,6 @@ from keras.optimizers import Adam, Nadam
 from keras.callbacks import ModelCheckpoint, \
     LearningRateScheduler, ReduceLROnPlateau, \
     EarlyStopping
-from sklearn.feature_extraction.image import extract_patches_2d
-from skimage.util.shape import view_as_blocks
-from sklearn.preprocessing import LabelEncoder
 
 # ResNet imports
 import sys
@@ -38,103 +35,11 @@ from utils import lr_schedule
 from sen12ms_dataLoader import SEN12MSDataset, \
     Seasons, Sensor, S1Bands, S2Bands, LCBands
 
+# util imports
+import datagen
+import land_cover_utils
+
 ALL_SEASONS = [season for season in Seasons if season != Seasons.ALL]
-
-def json_keys_to_int(x):
-    '''
-    Helper function to parse JSON with ints as keys
-    '''
-    try:
-        return {int(k):v for k,v in x.items()}
-    except:
-        return x
-
-def get_label_encoder(config):
-    '''
-    Uses config_dict's landuse_class info to get an sklearn label_encoder
-    Output: sklearn label_encoder
-    '''
-    # get remaining classes after merging
-    merged_classes = set(config['landuse_class_mappings'].keys())
-    all_classes = set(config['landuse_class_descriptions'].keys())
-    remaining_classes = all_classes - merged_classes
-    # sort class_nums
-    class_nums_sorted = sorted(list(remaining_classes))
-    # get label_encoder
-    label_encoder = LabelEncoder()
-    label_encoder.classes_ = np.array(class_nums_sorted)
-    return label_encoder
-
-def patch_to_subpatches(patch, config):
-    '''
-    Input: single patch: B, W, H
-    Output: N, B, subpatch_size, subpatch_size
-    '''
-    subpatch_size = config['training_params']['subpatch_size']
-    subpatches = view_as_blocks(patch, \
-        block_shape=(subpatch_size, subpatch_size, patch.shape[-1]))
-    subpatches = np.squeeze(subpatches)
-    subpatches = np.concatenate(subpatches, axis=0)
-    return subpatches
-
-def scene_to_subpatches(patches, config):
-    '''
-    Split square patches into smaller squre sub-patches
-    Input: patches of shape D, B, W, H
-    Output: patches of shape N, B, subpatch_size, subpatch_size
-        N = D * (W / subpatch_size)
-    '''
-    subpatch_size = config['training_params']['subpatch_size']
-    all_subpatches = [] # list of each patch's subpatch array
-    for i, patch in enumerate(patches):
-        subpatches = patch_to_subpatches(patch, config)
-        all_subpatches.append(subpatches)
-    # concat all subpatches
-    return np.concatenate(all_subpatches, axis=0)
-
-def combine_landuse_classes(landuse, config):
-    '''
-    Input: land use patches (Shape: D, W, H), config
-    Output: land use patches with combined classes (see Section 5 of SEN12MS paper)
-    '''
-    landuse_class_mappings = config['landuse_class_mappings']
-    for from_class, to_class in landuse_class_mappings.items():
-        landuse = np.where(landuse==from_class, to_class, landuse)
-    return landuse
-
-def get_landuse_labels(lc, config):
-    '''
-    Input: lc (land cover bands, Shape: D, W, H, B=4), config
-    Output: majority LCCS land-use class, Shape: D
-    '''
-    land_use_patches = lc[:, :, :, LCBands.landuse.value-1]
-    land_use_patches = combine_landuse_classes(land_use_patches, config)
-    land_use_flattened = land_use_patches.reshape(land_use_patches.shape[0], -1)
-    modes, counts = stats.mode(land_use_flattened, axis=1)
-    return np.ravel(modes)
-
-def get_represented_landuse_classes_from_onehot_labels(y, label_encoder):
-    '''
-    Input: y (one-hot labels, 2D array), label_encoder
-    Output: list of landuse class numbers that do appear in y
-    '''
-    labels = np.argmax(y, axis=1)
-    landuse_classes = label_encoder.inverse_transform(labels)
-    represented_classes = set(np.unique(landuse_classes).tolist())
-    all_classes = set(label_encoder.classes_.tolist())
-    missing_classes = all_classes - represented_classes
-    return list(represented_classes)
-
-def get_missing_landuse_classes_from_onehot_labels(y, label_encoder):
-    '''
-    Input: y (one-hot labels, 2D array), label_encoder
-    Output: list of landuse class numbers that do not appear in y
-    '''
-    all_classes = set(label_encoder.classes_.tolist())
-    represented_classes = get_represented_landuse_classes_from_onehot_labels(y)
-    represented_classes = set(represented_classes)
-    missing_classes = all_classes - represented_classes
-    return list(missing_classes)
 
 def preprocess_s2_lc(s2, lc, config, label_encoder):
     '''
@@ -144,10 +49,10 @@ def preprocess_s2_lc(s2, lc, config, label_encoder):
     # move bands to last axis
     s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
     # get subpatches
-    s2 = scene_to_subpatches(s2, config)
-    lc = scene_to_subpatches(lc, config)
+    s2 = land_cover_utils.scene_to_subpatches(s2, config)
+    lc = land_cover_utils.scene_to_subpatches(lc, config)
     # get majority classes
-    labels = get_landuse_labels(lc, config)
+    labels = land_cover_utils.get_landuse_labels(lc, config)
     # remove instances with '0' mode label
     zero_label_inds = np.where(labels == 0)[0]
     if config['verbose'] >= 1 and len(zero_label_inds) > 0:
@@ -199,6 +104,17 @@ def get_callbacks(filepath, config):
                                    patience=config['lr_reducer_params']['patience'],
                                    min_lr=config['lr_reducer_params']['min_lr'])
     return [checkpoint, early_stopping, lr_reducer]
+
+def get_train_val_scene_dirs(scene_dirs, config):
+    '''
+    Input: scene_dirs (list), config
+    Output: train_scene_dirs, val_scene_dirs
+    '''
+    num_val_scenes = int(len(scene_dirs) * config['training_params']['val_size'])
+    np.random.seed(config['experiment_params']['val_split_seed'])
+    val_scene_dirs = np.random.choice(scene_dirs, size=num_val_scenes).tolist()
+    train_scene_dirs = set(scene_dirs) - set(val_scene_dirs)
+    return train_scene_dirs, val_scene_dirs
 
 def get_train_val_patch_ids_from_scene(sen12ms, train_season, train_scene_id, config):
     '''
@@ -264,7 +180,7 @@ def get_model_history_filepath(train_season, train_scene_ids, config):
     history_filepath = model_filepath.split('.h5')[0] + '_history.json'
     return model_filepath, history_filepath
 
-def train_and_save_resnet_model(sen12ms, train_season, train_scene_ids, config):
+def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids, config):
     '''
     Inputs: sen12ms, train_season (enum or list of enums),
         train_scene_ids (int or list of ints), config
@@ -286,7 +202,7 @@ def train_and_save_resnet_model(sen12ms, train_season, train_scene_ids, config):
     print("val_lc size (bytes): {}".format(sys.getsizeof(val_lc)))
     # preprocessing
     print("Preprocessing s2, lc patches...")
-    label_encoder = get_label_encoder(config)
+    label_encoder = land_cover_utils.get_label_encoder(config)
     X_train, y_train = preprocess_s2_lc(train_s2, train_lc, config, label_encoder)
     X_val, y_val = preprocess_s2_lc(val_s2, val_lc, config, label_encoder)
     print("X_train shape: ", X_train.shape)
@@ -294,10 +210,10 @@ def train_and_save_resnet_model(sen12ms, train_season, train_scene_ids, config):
     print("y_train shape: ", y_train.shape)
     print("y_val shape: ", y_val.shape)
     # print classes represented in train, val sets
-    train_represented_classes = get_represented_landuse_classes_from_onehot_labels(y_train, \
-        label_encoder)
-    val_represented_classes = get_represented_landuse_classes_from_onehot_labels(y_train, \
-        label_encoder)
+    train_represented_classes = land_cover_utils.get_represented_landuse_classes_from_onehot_labels(
+        y_train, label_encoder)
+    val_represented_classes = land_cover_utils.get_represented_landuse_classes_from_onehot_labels(
+        y_train, label_encoder)
     print("y_train represented classes: ", train_represented_classes)
     print("y_val represented classes: ", val_represented_classes)
     # get compiled model
@@ -317,6 +233,69 @@ def train_and_save_resnet_model(sen12ms, train_season, train_scene_ids, config):
     with open(history_filepath, 'wb') as f:
         pickle.dump(history, f)
     print("Model history saved to: ", history_filepath)
+    return model, history
+
+def train_resnet_on_scene_dirs(scene_dirs, model_filepath, config):
+    '''
+    Input: scene_dirs, config
+    Output: trained ResNet model (saved to disk), training history
+    '''
+    # get train, val subpatch .npy dirs
+    print("Performing train/val split...")
+    train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
+    train_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(train_scene_dirs)
+    val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
+    # get compiled keras model
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    model = get_compiled_resnet(config, label_encoder)
+    # set up callbacks, data generators
+    history_filepath = model_filepath.split('.h5')[0] + '_history.pkl'
+    callbacks = get_callbacks(model_filepath, config)
+    train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config)
+    val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config)
+    # fit keras model
+    print("Training keras model...")
+    history = model.fit_generator(
+        train_datagen,
+        epochs=config['training_params']['max_epochs'],
+        validation_data=val_datagen,
+        callbacks=callbacks,
+        max_queue_size=config['training_params']['batch_size'],
+        use_multiprocessing=config['training_params']['use_multiprocessing'],
+        workers=config['training_params']['workers']
+    )
+    # save model history
+    with open(history_filepath, 'wb') as f:
+        pickle.dump(history, f)
+    print("Model history saved to: ", history_filepath)
+    return model, history
+
+def train_resnet_on_continent(continent, config):
+    '''
+    Input: continent, config
+    Output: trained ResNet model (saved to disk), training history
+    '''
+    print("--- Training ResNet model on {} ---".format(continent))
+    model_filepath = os.path.join(
+        config['model_save_dir'],
+        'by_continent',
+        'sen12ms_continent_{}_resnet{}.h5'.format(continent, config['resnet_params']['depth']))
+    scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
+    model, history = train_resnet_on_scene_dirs(scene_dirs, model_filepath, config)
+    return model, history
+
+def train_resnet_on_season(season, config):
+    '''
+    Input: season, config
+    Output: trained ResNet model (saved to disk), training history
+    '''
+    print("--- Training ResNet model on {} ---".format(season))
+    model_filepath = os.path.join(
+        config['model_save_dir'],
+        'by_season',
+        'sen12ms_season_{}_resnet{}.h5'.format(season, config['resnet_params']['depth']))
+    scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
+    model, history = train_resnet_on_scene_dirs(scene_dirs, model_filepath, config)
     return model, history
 
 def evaluate_on_single_scene(sen12ms, config, label_encoder, \
@@ -353,7 +332,7 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
     assert model is not None or model_path is not None
     assert len(test_seasons) == len(test_scene_ids)
     # load model if necessary
-    label_encoder = get_label_encoder(config)
+    label_encoder = land_cover_utils.get_label_encoder(config)
     if model is None: 
         model = load_model(model_path)
     # evaluate on each test scene
@@ -371,7 +350,7 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
                 pickle.dump(all_results, f)
     return all_results
 
-def train_models_for_each_season(config):
+def train_single_scene_models_for_each_season(config):
     '''
     Inputs: config (dict)
     Output: saved Keras models (on disk)
@@ -390,7 +369,7 @@ def train_models_for_each_season(config):
             if os.path.exists(model_filepath) and os.path.exists(history_filepath):
                 print("{} exists! Skipping model training".format(history_filepath))
                 continue
-            train_and_save_resnet_model(sen12ms, season, scene, config)
+            train_resnet_on_scene_ids_for_season(sen12ms, season, scene, config)
 
 def evaluate_saved_models_on_each_season(config):
     '''
@@ -439,10 +418,14 @@ def main(args):
     # get config
     config_json_path = args.config_path
     with open(config_json_path, 'r') as f:
-        config = json.load(f, object_hook=json_keys_to_int)
-    # train new models on sampled seasons/scenes
+        config = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
+    # train new models on all continents
     if args.train:
-        train_models_for_each_season(config)
+        # train_single_scene_models_for_each_season(config)
+        for season in config['all_seasons']:
+            train_resnet_on_season(season, config)
+        for continent in config['all_continents']:
+            train_resnet_on_continent(continent, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)

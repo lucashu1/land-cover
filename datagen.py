@@ -4,9 +4,10 @@ Adapted from https://github.com/calebrob6/land-cover/blob/master/datagen.py
 '''
 
 # imports
+import math
 import numpy as np
 import keras.utils
-from classify import get_label_encoder
+from land_cover_utils import get_label_encoder
 
 def color_aug(colors):
     # TODO: update this
@@ -30,8 +31,8 @@ class SubpatchDataGenerator(keras.utils.Sequence):
 
         self.patch_paths = patch_paths
         self.batch_size = config['training_params']['batch_size']
-        self.steps_per_epoch = len(self.patch_paths) // self.batch_size
-        assert steps_per_epoch * batch_size < len(patch_paths)
+        self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
+        # assert self.steps_per_epoch * batch_size < len(patch_paths)
 
         self.input_size = config['training_params']['subpatch_size']
         self.num_channels = len(config['s2_input_bands'])

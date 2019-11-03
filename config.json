@@ -7,6 +7,12 @@
     "continents_json_path":"/home/lucas/land-cover/continents.json",
     "scene_locations_json_path":"/home/lucas/land-cover/all_scene_locations.json",
     "num_scenes_total": 252,
+    "all_continents": [
+        "Africa", "Asia", "Australia", "Europe", "North_America", "South_America"
+    ],
+    "all_seasons": [
+        "spring", "summer", "fall", "winter"
+    ],
     "s2_input_bands": [
         "blue", "green", "red",
         "re1", "re2", "re3",
@@ -45,7 +51,9 @@
         "val_size": 0.20,
         "max_epochs": 200,
         "early_stopping_patience": 10,
-        "do_color_aug": false
+        "do_color_aug": false,
+        "use_multiprocessing": true,
+        "workers": 4
     },
     "lr_reducer_params": {
        "factor": 0.316,
