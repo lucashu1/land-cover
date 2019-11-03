@@ -6,7 +6,7 @@ Preprocess SEN12MS dataset and saves
 individual subpatches as .npy files
 
 Resulting directory structure:
-continent_season -> scene_id -> patch_id -> (subpatch_s2.npy, subpatch_label.npy)
+continent-season -> scene_id -> patch_id -> (subpatch_s2.npy, subpatch_label.npy)
 '''
 
 import os
@@ -26,7 +26,8 @@ def get_subpatch_save_path(config, continent, season, scene, patch, subpatch, la
     Get subpatch save path for subpatch instance
     '''
     season = season.split("_")[-1] # remove ROI
-    continent_season = "{}_{}".format(continent, season)
+    continent = continent.replace(" ", "_")
+    continent_season = "{}-{}".format(continent, season)
     save_path = os.path.join(
         config['subpatches_dataset_dir'],
         continent_season,

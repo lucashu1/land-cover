@@ -44,7 +44,8 @@
         "batch_size": 128,
         "val_size": 0.20,
         "max_epochs": 200,
-        "early_stopping_patience": 10
+        "early_stopping_patience": 10,
+        "do_color_aug": false
     },
     "lr_reducer_params": {
        "factor": 0.316,
