@@ -95,7 +95,8 @@ def get_callbacks(filepath, config):
     checkpoint = ModelCheckpoint(filepath=filepath,
                                  monitor='val_loss',
                                  verbose=1,
-                                 save_best_only=True)
+                                 save_best_only=True,
+                                 save_weights_only=True)
     early_stopping = EarlyStopping(monitor='val_loss',
                                    patience=config['training_params']['early_stopping_patience'],
                                    restore_best_weights=True)
@@ -108,12 +109,13 @@ def get_callbacks(filepath, config):
 def get_train_val_scene_dirs(scene_dirs, config):
     '''
     Input: scene_dirs (list), config
-    Output: train_scene_dirs, val_scene_dirs
+    Output: train_scene_dirs (list), val_scene_dirs (list)
     '''
     num_val_scenes = int(len(scene_dirs) * config['training_params']['val_size'])
+    # set seed, and sort scene_dirs to get reproducible split
     np.random.seed(config['experiment_params']['val_split_seed'])
-    val_scene_dirs = np.random.choice(scene_dirs, size=num_val_scenes).tolist()
-    train_scene_dirs = set(scene_dirs) - set(val_scene_dirs)
+    val_scene_dirs = np.random.choice(sorted(scene_dirs), size=num_val_scenes).tolist()
+    train_scene_dirs = list(set(scene_dirs) - set(val_scene_dirs))
     return train_scene_dirs, val_scene_dirs
 
 def get_train_val_patch_ids_from_scene(sen12ms, train_season, train_scene_id, config):
@@ -235,7 +237,7 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
     print("Model history saved to: ", history_filepath)
     return model, history
 
-def train_resnet_on_scene_dirs(scene_dirs, model_filepath, config):
+def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     '''
     Input: scene_dirs, config
     Output: trained ResNet model (saved to disk), training history
@@ -243,14 +245,16 @@ def train_resnet_on_scene_dirs(scene_dirs, model_filepath, config):
     # get train, val subpatch .npy dirs
     print("Performing train/val split...")
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
+    print("train_scene_dirs: ", train_scene_dirs)
+    print("val_scene_dirs: ", val_scene_dirs)
     train_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(train_scene_dirs)
     val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
     model = get_compiled_resnet(config, label_encoder)
     # set up callbacks, data generators
-    history_filepath = model_filepath.split('.h5')[0] + '_history.pkl'
-    callbacks = get_callbacks(model_filepath, config)
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    callbacks = get_callbacks(weights_path, config)
     train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config)
     val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config)
     # fit keras model
@@ -276,12 +280,13 @@ def train_resnet_on_continent(continent, config):
     Output: trained ResNet model (saved to disk), training history
     '''
     print("--- Training ResNet model on {} ---".format(continent))
-    model_filepath = os.path.join(
+    weights_path = os.path.join(
         config['model_save_dir'],
         'by_continent',
-        'sen12ms_continent_{}_resnet{}.h5'.format(continent, config['resnet_params']['depth']))
+        'sen12ms_continent_{}_resnet-{}_weights.h5'\
+            .format(continent, config['resnet_params']['depth']))
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
-    model, history = train_resnet_on_scene_dirs(scene_dirs, model_filepath, config)
+    model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
 def train_resnet_on_season(season, config):
@@ -293,7 +298,8 @@ def train_resnet_on_season(season, config):
     model_filepath = os.path.join(
         config['model_save_dir'],
         'by_season',
-        'sen12ms_season_{}_resnet{}.h5'.format(season, config['resnet_params']['depth']))
+        'sen12ms_season_{}_resnet-{}_weights.h5'\
+            .format(season, config['resnet_params']['depth']))
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, model_filepath, config)
     return model, history
@@ -307,7 +313,11 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     '''
     assert model is not None or model_path is not None
     if model is None:
-        model = load_model(model_path)
+        if 'weights' in model_path:
+            model = get_compiled_resnet(config, label_encoder)
+            model.load_weights(model_path)
+        else:
+            model = load_model(model_path)
     # load data
     s1, s2, lc, bounds = sen12ms.get_triplets(test_season, test_scene_id, \
         s2_bands=config['s2_input_bands'])

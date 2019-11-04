@@ -50,7 +50,7 @@
         "batch_size": 128,
         "val_size": 0.20,
         "max_epochs": 200,
-        "early_stopping_patience": 10,
+        "early_stopping_patience": 2,
         "do_color_aug": false,
         "use_multiprocessing": true,
         "workers": 4
@@ -62,6 +62,6 @@
        "min_lr": 0.0000005
     },
     "resnet_params": {
-        "depth": 20
+        "depth": 50
     }
 }

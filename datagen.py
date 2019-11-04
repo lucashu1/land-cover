@@ -53,8 +53,7 @@ class SubpatchDataGenerator(keras.utils.Sequence):
         indices = self.indices[index*self.batch_size:(index+1)*self.batch_size]
         batch_paths = [self.patch_paths[i] for i in indices]
 
-        x_batch = np.zeros((self.batch_size, self.input_size, self.input_size, \
-            self.num_channels), dtype=np.float32)
+        x_batch = []
         labels_batch = []
         
         for i, subpatch_path in enumerate(batch_paths):
@@ -72,19 +71,29 @@ class SubpatchDataGenerator(keras.utils.Sequence):
                 y_idx = np.random.randint(0, data_size - self.input_size)
                 data = data[y_idx:y_idx+self.input_size, x_idx:x_idx+self.input_size, :]
 
-            # setup x
-            if self.do_color_aug:
-                x_batch[i] = color_aug(data)
-            else:
-                x_batch[i] = data
-
             # get label from filepath
             label = int(subpatch_path.split("label_")[-1].split(".npy")[0])
+            if label == 0:
+                continue
             labels_batch.append(label)
+
+            # setup x
+            if self.do_color_aug:
+                x_batch.append(color_aug(data))
+            else:
+                x_batch.append(data)
+
+        # convert x_batch t0 numpy array
+        x_batch = np.array(x_batch)
 
         # get one-hot y_batch from labels
         y_batch = self.label_encoder.transform(labels_batch)
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
+
+        assert x_batch.shape[0] == y_batch.shape[0]
+        #if (x_batch.shape[0] != self.batch_size):
+            #print('warning: x_batch.shape[0] ({}) < batch_size ({})'\
+            #    .format(x_batch.shape[0], self.batch_size))
 
         return x_batch.copy(), y_batch.copy()
 
