@@ -499,8 +499,8 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
     # get patch_paths
-    train_patch_paths = get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
-    val_patch_paths = get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
+    train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
+    val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
     model = get_compiled_fc_densenet(config, label_encoder)
@@ -538,13 +538,13 @@ def train_fc_densenet_on_season(season, config):
     Input: continent, config
     Output: trained DenseNet model (saved to disk), training history
     '''
-    print("--- Training FC-DenseNet model on {} ---".format(continent))
+    print("--- Training FC-DenseNet model on {} ---".format(season))
     weights_path = os.path.join(
         config['model_save_dir'],
-        'by_continent',
-        'sen12ms_continent_{}_FC-DenseNet-{}_weights.h5'\
-            .format(continent)
-    scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
+        'by_season',
+        'sen12ms_season_{}_FC-DenseNet_weights.h5'\
+            .format(season))
+    scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
@@ -558,8 +558,8 @@ def train_fc_densenet_on_continent(continent, config):
         config['model_save_dir'],
         'by_season',
         'sen12ms_season_{}_FC-DenseNet_weights.h5'\
-            .format(season, config['resnet_params']['depth']))
-    scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
+            .format(continent))
+    scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
@@ -575,18 +575,18 @@ def main(args):
     if args.train:
         # train_single_scene_models_for_each_season(config)
         for season in config['all_seasons']:
-            train_resnet_on_season(season, config)
+            #train_resnet_on_season(season, config)
             train_fc_densenet_on_season(season, config)
         for continent in config['all_continents']:
-            if continent != 'Africa':
-                train_resnet_on_continent(continent, config)
+            #if continent != 'Africa':
+            #    train_resnet_on_continent(continent, config)
             train_fc_densenet_on_continent(continent, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train or test land-cover ResNet model(s)')
+    parser = argparse.ArgumentParser(description='Train or test land-cover model(s)')
     parser.add_argument('-c', '--config', dest='config_path', help='config JSON path')
     parser.add_argument('--train', dest='train', action='store_true', help='train new models')
     parser.add_argument('--test', dest='test', action='store_true', help='test saved models')

@@ -4,6 +4,7 @@ Adapted from https://github.com/calebrob6/land-cover/blob/master/datagen.py
 '''
 
 # imports
+import os
 import math
 import numpy as np
 import keras.utils
@@ -26,11 +27,11 @@ def color_aug(colors):
 class SegmentationDataGenerator(keras.utils.Sequence):
     'Generates semantic segmentation batch data for Keras'
     
-    def __init__(self, patch_dirs, config):
+    def __init__(self, patch_paths, config):
         'Initialization'
 
         self.patch_paths = patch_paths
-        self.batch_size = config['training_params']['batch_size']
+        self.batch_size = config['fc_densenet_params']['batch_size']
         self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
         # assert self.steps_per_epoch * batch_size < len(patch_paths)
 
@@ -58,17 +59,17 @@ class SegmentationDataGenerator(keras.utils.Sequence):
         y_batch = []
         
         for i, patch_path in enumerate(batch_paths):
-            s2 = np.load(os.path.join(subpatch_path, "s2.npy"))
+            s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
             s2 = s2.squeeze()
             s2 /= self.max_input_val
-            landuse = np.load(os.path.join(subpatch_path, "landuse.npy"))
+            landuse = np.load(os.path.join(patch_path, "landuse.npy"))
             landuse = landuse.squeeze()
 
-            # check input dimensions
-            assert data.shape[0] == data.shape[1]
+            # check dimensions
+            assert s2.shape[0] == s2.shape[1]
             assert landuse.shape[0] == landuse.shape[1]
-            assert data.shape[0] == landuse.shape[0]
-            assert data.shape[0] == self.input_size
+            assert s2.shape[0] == landuse.shape[0]
+            assert s2.shape[0] == self.input_size
 
             # check for missing labels
             num_zeros = np.count_nonzero(landuse == 0)
@@ -83,7 +84,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 
             # setup y (apply label-encoder)
             landuse = self.label_encoder.transform(landuse.flatten())
-            landuse = landuse.reshape((self.input_shape, self.input_shape))
+            landuse = landuse.reshape((self.input_size, self.input_size))
             y_batch.append(landuse)
 
         # convert x, y to numpy arrays

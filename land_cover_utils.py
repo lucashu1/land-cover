@@ -108,14 +108,16 @@ def get_missing_landuse_classes_from_onehot_labels(y, label_encoder):
     missing_classes = all_classes - represented_classes
     return list(missing_classes)
 
-def get_scene_dirs_for_continent(continent, config):
+def get_scene_dirs_for_continent(continent, config, mode='subpatches'):
     '''
     Input: continent (e.g. North_America), config
     Output: list of scene directories for that continent
     '''
     # get directories for this continent
+    dataset_dir = config['subpatches_dataset_dir'] if mode == 'subpatches' \
+        else config['segmentation_dataset_dir']
     continent_season_subdirs = [entry.path \
-        for entry in os.scandir(config['subpatches_dataset_dir']) \
+        for entry in os.scandir(dataset_dir) \
         if entry.is_dir() and \
         continent in entry.name]
     # traverse 1 level down to get scene directories
@@ -126,14 +128,16 @@ def get_scene_dirs_for_continent(continent, config):
         all_scene_dirs += scene_dirs
     return all_scene_dirs
 
-def get_scene_dirs_for_season(season, config):
+def get_scene_dirs_for_season(season, config, mode='subpatches'):
     '''
     Input: season (e.g. fall), config
     Output: list of scene directories for that continent
     '''
-    # get directories for this continent
+    # get directories for this season
+    dataset_dir = config['subpatches_dataset_dir'] if mode == 'subpatches' \
+        else config['segmentation_dataset_dir']
     continent_season_subdirs = [entry.path \
-        for entry in os.scandir(config['subpatches_dataset_dir']) \
+        for entry in os.scandir(dataset_dir) \
         if entry.is_dir() and \
         season in entry.name]
     # traverse 1 level down to get scene directories
