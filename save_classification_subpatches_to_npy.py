@@ -1,5 +1,5 @@
 '''
-save_subpatches_to_npy.py
+save_classification_subpatches_to_npy.py
 Author: Lucas Hu
 
 Preprocess SEN12MS dataset and saves 

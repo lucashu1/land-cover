@@ -8,6 +8,7 @@ import os
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from skimage.util.shape import view_as_blocks
+import keras
 from sen12ms_dataLoader import SEN12MSDataset, \
     Seasons, Sensor, S1Bands, S2Bands, LCBands
 
@@ -143,9 +144,30 @@ def get_scene_dirs_for_season(season, config):
         all_scene_dirs += scene_dirs
     return all_scene_dirs
 
+def get_segmentation_patch_paths_for_scene_dir(scene_dir):
+    '''
+    Input: single scene_dir
+    Output: list of segmentation data patch paths
+    '''
+    all_subpatch_paths = []
+    patch_dirs = [entry.path for entry in os.scandir(scene_dir) \
+        if entry.is_dir() and 'patch' in entry.name]
+    return patch_dirs
+
+def get_segmentation_patch_paths_for_scene_dirs(scene_dirs):
+    '''
+    Input: scene_dirs (list)
+    Output: list of subpatch .npy paths
+    '''
+    all_patch_paths = []
+    # traverse scenes
+    for scene_dir in scene_dirs:
+        all_patch_paths += get_segmentation_patch_paths_for_scene_dir(scene_dir)
+    return all_patch_paths
+
 def get_subpatch_paths_for_scene_dir(scene_dir):
     '''
-    Input: single scene_dir)
+    Input: single scene_dir
     Output: list of subpatch .npy paths
     '''
     all_subpatch_paths = []

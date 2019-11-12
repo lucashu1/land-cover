@@ -31,6 +31,10 @@ sys.path.append('./CBAM-keras')
 from models import resnet_v1
 from utils import lr_schedule
 
+# DenseNet imports
+sys.path.append('./DenseNet')
+from densenet import DenseNetFCN
+
 # SEN12MS imports
 from sen12ms_dataLoader import SEN12MSDataset, \
     Seasons, Sensor, S1Bands, S2Bands, LCBands
@@ -41,7 +45,7 @@ import land_cover_utils
 
 ALL_SEASONS = [season for season in Seasons if season != Seasons.ALL]
 
-def preprocess_s2_lc(s2, lc, config, label_encoder):
+def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder):
     '''
     Input: s2, lc, config, label_encoder
     Output: X (s2 subpatches), y (one-hot labels)
@@ -67,6 +71,31 @@ def preprocess_s2_lc(s2, lc, config, label_encoder):
     X = s2
     return X, y
 
+def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
+    '''
+    Input: s2, lc, config, label_encoder
+    Output: X (s2 patches), y (one-hot land-use patches)
+    '''
+    img_size = config['training_params']['patch_size']
+    num_classes = len(label_encoder.classes_)
+    # move bands to last axis
+    s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
+    # get landuse labels
+    landuse = lc[:, :, :, LCBands.landuse.value-1]
+    landuse = land_cover_utils.combine_landuse_classes(landuse, config)
+    # delete patches with '0' landuse values
+    zero_label_inds = np.where(labels == 0)[0]
+    if config['verbose'] >= 1 and len(zero_label_inds) > 0:
+        print('Removing {} instances with "0" landuse label'.format(len(zero_label_inds)))
+    landuse = np.delete(landuse, zero_label_inds, axis=0)
+    s2 = np.delete(s2, zero_label_inds, axis=0)
+    # encode labels
+    landuse = label_encoder.transform(landuse.flatten()).reshape((img_size,img_size))
+    y = keras.utils.to_categorical(landuse, num_classes=num_classes)
+    X = s2
+    assert X.shape[0] == y.shape[0]
+    return X, y
+
 def get_compiled_resnet(config, label_encoder):
     '''
     Input: config dict, label_encoder
@@ -83,7 +112,24 @@ def get_compiled_resnet(config, label_encoder):
         attention_module=None)
     # compile
     model.compile(loss='categorical_crossentropy',
-        optimizer=Nadam(lr=config['training_params']['learning_rate']),
+        optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
+        metrics=['accuracy'])
+    return model
+
+def get_compiled_fc_densenet(config, label_encoder):
+    '''
+    Input: config_dict, label_encoder
+    Output: compiled FC-DenseNet model
+    '''
+    # init FC DenseNet
+    num_classes = len(label_encoder.classes_)
+    img_size = config['training_params']['patch_size']
+    input_shape=(img_size, img_size, len(config['s2_input_bands']))
+    model = DenseNetFCN(input_shape, include_top=True, weights=None, \
+        classes=num_classes, activation='softmax')
+    # compile
+    model.compile(loss='categorical_crossentropy',
+        optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
         metrics=['accuracy'])
     return model
 
@@ -205,8 +251,8 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
     # preprocessing
     print("Preprocessing s2, lc patches...")
     label_encoder = land_cover_utils.get_label_encoder(config)
-    X_train, y_train = preprocess_s2_lc(train_s2, train_lc, config, label_encoder)
-    X_val, y_val = preprocess_s2_lc(val_s2, val_lc, config, label_encoder)
+    X_train, y_train = preprocess_s2_lc_for_classification(train_s2, train_lc, config, label_encoder)
+    X_val, y_val = preprocess_s2_lc_for_classification(val_s2, val_lc, config, label_encoder)
     print("X_train shape: ", X_train.shape)
     print("X_val shape: ", X_val.shape)
     print("y_train shape: ", y_train.shape)
@@ -225,7 +271,7 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
     callbacks = get_callbacks(model_filepath, config)
     print("Training keras model...")
     history = model.fit(X_train, y_train,
-              batch_size=config['training_params']['batch_size'],
+              batch_size=config['resnet_params']['batch_size'],
               epochs=config['training_params']['max_epochs'],
               validation_data=(X_val, y_val),
               shuffle=True,
@@ -239,7 +285,7 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
 
 def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     '''
-    Input: scene_dirs, config
+    Input: scene_dirs, weights_path, config
     Output: trained ResNet model (saved to disk), training history
     '''
     # get train, val subpatch .npy dirs
@@ -253,7 +299,6 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     label_encoder = land_cover_utils.get_label_encoder(config)
     model = get_compiled_resnet(config, label_encoder)
     # set up callbacks, data generators
-    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
     callbacks = get_callbacks(weights_path, config)
     train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config)
     val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config)
@@ -264,11 +309,19 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
         epochs=config['training_params']['max_epochs'],
         validation_data=val_datagen,
         callbacks=callbacks,
-        max_queue_size=config['training_params']['batch_size'],
+        max_queue_size=config['resnet_params']['batch_size'],
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
-    # save model history
+    # save model history, train-val split
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    with open(train_split_filepath, 'w') as f:
+        train_split = {
+            'train_scene_dirs': train_scene_dirs,
+            'val_scene_dirs': val_scene_dirs
+        }
+        json.dump(train_split, f)
     with open(history_filepath, 'wb') as f:
         pickle.dump(history, f)
     print("Model history saved to: ", history_filepath)
@@ -313,8 +366,11 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     '''
     assert model is not None or model_path is not None
     if model is None:
-        if 'weights' in model_path:
+        if 'weights' in model_path and 'resnet' in model_path:
             model = get_compiled_resnet(config, label_encoder)
+            model.load_weights(model_path)
+        elif 'weights' in model_path and 'DenseNet' in model_path:
+            model = get_compiled_densenet(config, label_encoder)
             model.load_weights(model_path)
         else:
             model = load_model(model_path)
@@ -322,7 +378,10 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     s1, s2, lc, bounds = sen12ms.get_triplets(test_season, test_scene_id, \
         s2_bands=config['s2_input_bands'])
     # preprocessing: get subpatches, majority landuse class, etc.
-    X_test, y_test = preprocess_s2_lc(s2, lc, config, label_encoder)
+    if 'densenet' in model.name:
+        X_test, y_test = preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder)
+    else:
+        X_test, y_test = preprocess_s2_lc_for_classification(s2, lc, config, label_encoder)
     # run evaluation
     results = model.evaluate(X_test, y_test, verbose=1)
     return results
@@ -343,8 +402,15 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
     assert len(test_seasons) == len(test_scene_ids)
     # load model if necessary
     label_encoder = land_cover_utils.get_label_encoder(config)
-    if model is None: 
-        model = load_model(model_path)
+    if model is None:
+        if 'weights' in model_path and 'resnet' in model_path:
+            model = get_compiled_resnet(config, label_encoder)
+            model.load_weights(model_path)
+        elif 'weights' in model_path and 'DenseNet' in model_path:
+            model = get_compiled_densenet(config, label_encoder)
+            model.load_weights(model_path)
+        else:
+            model = load_model(model_path)
     # evaluate on each test scene
     all_results = defaultdict(dict)
     for i in range(len(test_scene_ids)):
@@ -386,6 +452,7 @@ def evaluate_saved_models_on_each_season(config):
     Inputs: config (dict)
     Output: saved results dict for each trained model (on disk)
     '''
+    # TODO: change this
     sen12ms = SEN12MSDataset(config['dataset_dir'])
     label_encoder = get_label_encoder(config)
     # get all seasons/scenes
@@ -421,6 +488,81 @@ def evaluate_saved_models_on_each_season(config):
             test_seasons=seasons, test_scene_ids=scenes, \
             results_path=results_path)
 
+def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
+    '''
+    Input: scene_dirs, weights_path, config
+    Output: trained FC-DenseNet model (saved to disk), training history
+    '''
+    # get train, val scene dirs
+    print("Performing train/val split...")
+    train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
+    print("train_scene_dirs: ", train_scene_dirs)
+    print("val_scene_dirs: ", val_scene_dirs)
+    # get patch_paths
+    train_patch_paths = get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
+    val_patch_paths = get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
+    # get compiled keras model
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    model = get_compiled_fc_densenet(config, label_encoder)
+    # set up callbacks, data generators
+    callbacks = get_callbacks(weights_path, config)
+    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config)
+    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config)
+    # fit keras model
+    print("Training keras model...")
+    history = model.fit_generator(
+        train_datagen,
+        epochs=config['training_params']['max_epochs'],
+        validation_data=val_datagen,
+        callbacks=callbacks,
+        max_queue_size=config['fc_densenet_params']['batch_size'],
+        use_multiprocessing=config['training_params']['use_multiprocessing'],
+        workers=config['training_params']['workers']
+    )
+    # save model history, train-val split
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    with open(train_split_filepath, 'w') as f:
+        train_split = {
+            'train_scene_dirs': train_scene_dirs,
+            'val_scene_dirs': val_scene_dirs
+        }
+        json.dump(train_split, f)
+    with open(history_filepath, 'wb') as f:
+        pickle.dump(history, f)
+    print("Model history saved to: ", history_filepath)
+    return None
+
+def train_fc_densenet_on_season(season, config):
+    '''
+    Input: continent, config
+    Output: trained DenseNet model (saved to disk), training history
+    '''
+    print("--- Training FC-DenseNet model on {} ---".format(continent))
+    weights_path = os.path.join(
+        config['model_save_dir'],
+        'by_continent',
+        'sen12ms_continent_{}_FC-DenseNet-{}_weights.h5'\
+            .format(continent)
+    scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
+    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    return model, history
+
+def train_fc_densenet_on_continent(continent, config):
+    '''
+    Input: season, config
+    Output: trained DenseNet model (saved to disk), training history
+    '''
+    print("--- Training FC-DenseNet model on {} ---".format(season))
+    weights_path = os.path.join(
+        config['model_save_dir'],
+        'by_season',
+        'sen12ms_season_{}_FC-DenseNet_weights.h5'\
+            .format(season, config['resnet_params']['depth']))
+    scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
+    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    return model, history
+
 def main(args):
     '''
     Main function: train new models, or test existing models on SEN12MS seasons/scenes
@@ -434,8 +576,11 @@ def main(args):
         # train_single_scene_models_for_each_season(config)
         for season in config['all_seasons']:
             train_resnet_on_season(season, config)
+            train_fc_densenet_on_season(season, config)
         for continent in config['all_continents']:
-            train_resnet_on_continent(continent, config)
+            if continent != 'Africa':
+                train_resnet_on_continent(continent, config)
+            train_fc_densenet_on_continent(continent, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)

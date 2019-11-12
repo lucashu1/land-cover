@@ -2,6 +2,7 @@
     "verbose": 1,
     "dataset_dir": "/data/datasets/sen12ms",
     "subpatches_dataset_dir":"/data/datasets/sen12ms_subpatches",
+    "segmentation_dataset_dir":"/data/datasets/sen12ms_segmentation",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/continents.json",
@@ -19,6 +20,7 @@
         "nir1", "nir2",
         "swir1", "swir2"
     ],
+    "s2_max_val": 28004,
     "landuse_class_descriptions": {
         "1": "Barren",
         "2": "Permanent Snow and Ice",
@@ -45,9 +47,8 @@
         "val_split_seed": 10
     },
     "training_params": {
-        "learning_rate": 0.0005,
+        "patch_size":256,
         "subpatch_size": 64,
-        "batch_size": 128,
         "val_size": 0.20,
         "max_epochs": 200,
         "early_stopping_patience": 2,
@@ -62,6 +63,12 @@
        "min_lr": 0.0000005
     },
     "resnet_params": {
+        "learning_rate":0.0005,
+        "batch_size":64,
         "depth": 50
+    },
+    "fc_densenet_params": {
+        "learning_rate":0.0001,
+        "batch_size":16
     }
 }
