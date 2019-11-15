@@ -126,7 +126,9 @@ def get_compiled_fc_densenet(config, label_encoder):
     img_size = config['training_params']['patch_size']
     input_shape=(img_size, img_size, len(config['s2_input_bands']))
     model = DenseNetFCN(input_shape, include_top=True, weights=None, \
-        classes=num_classes, activation='softmax')
+        classes=num_classes, \
+        nb_dense_block=config['fc_densenet_params']['nb_dense_block'], \
+        activation='softmax')
     # compile
     model.compile(loss='categorical_crossentropy',
         optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
@@ -378,7 +380,7 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     s1, s2, lc, bounds = sen12ms.get_triplets(test_season, test_scene_id, \
         s2_bands=config['s2_input_bands'])
     # preprocessing: get subpatches, majority landuse class, etc.
-    if 'densenet' in model.name:
+    if 'densenet' in model.name or 'DenseNet' in model_path:
         X_test, y_test = preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder)
     else:
         X_test, y_test = preprocess_s2_lc_for_classification(s2, lc, config, label_encoder)
@@ -452,7 +454,6 @@ def evaluate_saved_models_on_each_season(config):
     Inputs: config (dict)
     Output: saved results dict for each trained model (on disk)
     '''
-    # TODO: change this
     sen12ms = SEN12MSDataset(config['dataset_dir'])
     label_encoder = get_label_encoder(config)
     # get all seasons/scenes
@@ -463,7 +464,7 @@ def evaluate_saved_models_on_each_season(config):
             seasons.append(season)
             scenes.append(scene_id)
     # get all saved models
-    model_filepaths = glob.glob(os.path.join(config['model_save_dir'], '*.h5'))
+    model_filepaths = glob.glob(os.path.join(config['model_save_dir'], '**/*.h5'))
     # evaluate each saved model on each seasons/scene
     for model_path in model_filepaths:
         print('Evaluating model path: ', model_path)
@@ -482,6 +483,9 @@ def evaluate_saved_models_on_each_season(config):
             if all(season_results_complete):
                 print("{} already complete! Skipping model eval".format(results_path))
                 continue
+        # don't evaluate single-scene models
+        if 'scene' in model_name:
+            continue
         # evaluate model
         evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
             model_path=model_path, \
@@ -574,13 +578,13 @@ def main(args):
     # train new models on all continents
     if args.train:
         # train_single_scene_models_for_each_season(config)
+        for continent in config['all_continents']:
+            if continent != 'Africa':
+                train_resnet_on_continent(continent, config)
+            train_fc_densenet_on_continent(continent, config)
         for season in config['all_seasons']:
             #train_resnet_on_season(season, config)
             train_fc_densenet_on_season(season, config)
-        for continent in config['all_continents']:
-            #if continent != 'Africa':
-            #    train_resnet_on_continent(continent, config)
-            train_fc_densenet_on_continent(continent, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)
