@@ -557,7 +557,7 @@ def train_fc_densenet_on_continent(continent, config):
     Input: season, config
     Output: trained DenseNet model (saved to disk), training history
     '''
-    print("--- Training FC-DenseNet model on {} ---".format(season))
+    print("--- Training FC-DenseNet model on {} ---".format(continent))
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
