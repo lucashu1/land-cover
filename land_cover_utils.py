@@ -8,6 +8,7 @@ import os
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from skimage.util.shape import view_as_blocks
+from scipy import stats
 import keras
 from sen12ms_dataLoader import SEN12MSDataset, \
     Seasons, Sensor, S1Bands, S2Bands, LCBands

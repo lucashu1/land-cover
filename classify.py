@@ -380,7 +380,8 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     s1, s2, lc, bounds = sen12ms.get_triplets(test_season, test_scene_id, \
         s2_bands=config['s2_input_bands'])
     # preprocessing: get subpatches, majority landuse class, etc.
-    if 'densenet' in model.name or 'DenseNet' in model_path:
+    if (model is not None and 'densenet' in model.name) or \
+            (model_path is not None and 'DenseNet' in model_path):
         X_test, y_test = preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder)
     else:
         X_test, y_test = preprocess_s2_lc_for_classification(s2, lc, config, label_encoder)
@@ -455,7 +456,7 @@ def evaluate_saved_models_on_each_season(config):
     Output: saved results dict for each trained model (on disk)
     '''
     sen12ms = SEN12MSDataset(config['dataset_dir'])
-    label_encoder = get_label_encoder(config)
+    label_encoder = land_cover_utils.get_label_encoder(config)
     # get all seasons/scenes
     seasons = []
     scenes = []
