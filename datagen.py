@@ -72,8 +72,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             assert s2.shape[0] == self.input_size
 
             # check for missing labels
-            num_zeros = np.count_nonzero(landuse == 0)
-            if num_zeros > 0:
+            num_unknown = np.count_nonzero(landuse==0) + np.count_nonzero(landuse==15)
+            if num_unknown > 0:
                 continue
 
             # setup x
@@ -110,7 +110,7 @@ class SubpatchDataGenerator(keras.utils.Sequence):
         'Initialization'
 
         self.patch_paths = patch_paths
-        self.batch_size = config['training_params']['batch_size']
+        self.batch_size = config['resnet_params']['batch_size']
         self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
         # assert self.steps_per_epoch * batch_size < len(patch_paths)
 
@@ -139,9 +139,9 @@ class SubpatchDataGenerator(keras.utils.Sequence):
         
         for i, subpatch_path in enumerate(batch_paths):
             if subpatch_path.endswith(".npz"):
-                data = np.load(subpatch_path)["arr_0"].squeeze()
+                data = np.load(subpatch_path)["arr_0"].squeeze().astype(np.float32)
             elif subpatch_path.endswith(".npy"):
-                data = np.load(subpatch_path).squeeze()
+                data = np.load(subpatch_path).squeeze().astype(np.float32)
 
             #do a random crop if input_size is less than the prescribed size
             assert data.shape[0] == data.shape[1]

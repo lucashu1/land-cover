@@ -340,6 +340,10 @@ def train_resnet_on_continent(continent, config):
         'by_continent',
         'sen12ms_continent_{}_resnet-{}_weights.h5'\
             .format(continent, config['resnet_params']['depth']))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    if os.path.exists(weights_path) and os.path.exists(history_path):
+        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+        return
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -350,13 +354,17 @@ def train_resnet_on_season(season, config):
     Output: trained ResNet model (saved to disk), training history
     '''
     print("--- Training ResNet model on {} ---".format(season))
-    model_filepath = os.path.join(
+    weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
         'sen12ms_season_{}_resnet-{}_weights.h5'\
             .format(season, config['resnet_params']['depth']))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    if os.path.exists(weights_path) and os.path.exists(history_filepath):
+        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+        return
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
-    model, history = train_resnet_on_scene_dirs(scene_dirs, model_filepath, config)
+    model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
 def evaluate_on_single_scene(sen12ms, config, label_encoder, \
@@ -549,6 +557,10 @@ def train_fc_densenet_on_season(season, config):
         'by_season',
         'sen12ms_season_{}_FC-DenseNet_weights.h5'\
             .format(season))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    if os.path.exists(weights_path) and os.path.exists(history_path):
+        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+        return
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -564,6 +576,10 @@ def train_fc_densenet_on_continent(continent, config):
         'by_season',
         'sen12ms_season_{}_FC-DenseNet_weights.h5'\
             .format(continent))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
+    if os.path.exists(weights_path) and os.path.exists(history_path):
+        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+        return
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -576,15 +592,16 @@ def main(args):
     config_json_path = args.config_path
     with open(config_json_path, 'r') as f:
         config = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
-    # train new models on all continents
+    # train new models on all seasons/continents
     if args.train:
-        # train_single_scene_models_for_each_season(config)
+        # finish training resnet models
         for continent in config['all_continents']:
             if continent != 'Africa':
                 train_resnet_on_continent(continent, config)
+        # train densenet models
+        for continent in config['all_continents']:
             train_fc_densenet_on_continent(continent, config)
         for season in config['all_seasons']:
-            #train_resnet_on_season(season, config)
             train_fc_densenet_on_season(season, config)
     # evaluate saved models on each season/scene
     if args.test:
