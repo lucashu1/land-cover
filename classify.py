@@ -592,6 +592,11 @@ def main(args):
     config_json_path = args.config_path
     with open(config_json_path, 'r') as f:
         config = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
+    # select GPU
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    GPU_ID = config['training_params'].get('gpu_id')
+    if GPU_ID is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = GPU_ID
     # train new models on all seasons/continents
     if args.train:
         # finish training resnet models
