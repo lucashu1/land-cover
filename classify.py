@@ -13,7 +13,6 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 import glob
 import argparse
 import json
-import pickle
 from collections import defaultdict
 import numpy as np
 from scipy import stats
@@ -52,6 +51,7 @@ def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder):
     '''
     # move bands to last axis
     s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
+    s2 = s2.astype(np.float32) / config['s2_max_val'] # normalize S2
     # get subpatches
     s2 = land_cover_utils.scene_to_subpatches(s2, config)
     lc = land_cover_utils.scene_to_subpatches(lc, config)
@@ -80,6 +80,7 @@ def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
     num_classes = len(label_encoder.classes_)
     # move bands to last axis
     s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
+    s2 = s2.astype(np.float32) / config['s2_max_val'] # normalize S2
     # get landuse labels
     landuse = lc[:, :, :, LCBands.landuse.value-1]
     landuse = land_cover_utils.combine_landuse_classes(landuse, config)
@@ -278,10 +279,11 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
               validation_data=(X_val, y_val),
               shuffle=True,
               callbacks=callbacks)
+    history = history.history
     print("Done training!")
     # save model history
-    with open(history_filepath, 'wb') as f:
-        pickle.dump(history, f)
+    with open(history_filepath, 'w') as f:
+        json.dump(history, f, indent=4)
     print("Model history saved to: ", history_filepath)
     return model, history
 
@@ -295,6 +297,16 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
+    # save train-val split
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    with open(train_split_filepath, 'w') as f:
+        train_split = {
+            'train_scene_dirs': train_scene_dirs,
+            'val_scene_dirs': val_scene_dirs
+        }
+        json.dump(train_split, f, indent=4)
+    # get subpatch filepaths
     train_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(train_scene_dirs)
     val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
@@ -306,6 +318,7 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config)
     # fit keras model
     print("Training keras model...")
+    history = None
     history = model.fit_generator(
         train_datagen,
         epochs=config['training_params']['max_epochs'],
@@ -315,17 +328,10 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
-    # save model history, train-val split
-    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
-    with open(train_split_filepath, 'w') as f:
-        train_split = {
-            'train_scene_dirs': train_scene_dirs,
-            'val_scene_dirs': val_scene_dirs
-        }
-        json.dump(train_split, f)
-    with open(history_filepath, 'wb') as f:
-        pickle.dump(history, f)
+    history = history.history
+    # save model history
+    with open(history_filepath, 'w') as f:
+        json.dump(history, f, indent=4)
     print("Model history saved to: ", history_filepath)
     return model, history
 
@@ -340,9 +346,10 @@ def train_resnet_on_continent(continent, config):
         'by_continent',
         'sen12ms_continent_{}_resnet-{}_weights.h5'\
             .format(continent, config['resnet_params']['depth']))
-    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    if os.path.exists(weights_path) and os.path.exists(history_path):
-        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
         return
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
@@ -359,9 +366,10 @@ def train_resnet_on_season(season, config):
         'by_season',
         'sen12ms_season_{}_resnet-{}_weights.h5'\
             .format(season, config['resnet_params']['depth']))
-    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    if os.path.exists(weights_path) and os.path.exists(history_filepath):
-        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
         return
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
@@ -433,8 +441,8 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
         all_results[season.value][scene_id] = scene_results
         # save results after each scene
         if results_path is not None:
-            with open(results_path, 'wb') as f:
-                pickle.dump(all_results, f)
+            with open(results_path, 'w') as f:
+                json.dump(all_results, f, indent=4)
     return all_results
 
 def train_single_scene_models_for_each_season(config):
@@ -476,15 +484,18 @@ def evaluate_saved_models_on_each_season(config):
     model_filepaths = glob.glob(os.path.join(config['model_save_dir'], '**/*.h5'))
     # evaluate each saved model on each seasons/scene
     for model_path in model_filepaths:
+        # for now, skip single-scene models
+        if 'by_scene' in model_path:
+            continue
         print('Evaluating model path: ', model_path)
-        # get results pkl dump filepath
+        # get results json dump filepath
         model_name = os.path.basename(model_path)
-        results_name = model_name.split('.h5')[0] + '_results.pkl'
+        results_name = model_name.split('_weights.h5')[0] + '_results.json'
         results_path = os.path.join(config['results_dir'], results_name)
         # check if results are already complete for this model
         if os.path.exists(results_path):
             with open(results_path, 'rb') as f:
-                existing_results = pickle.load(f)
+                existing_results = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
             print("Note: {} already exists!".format(results_path))
             season_results_complete = [len(season_results) == len(sen12ms.get_scene_ids(season)) \
                 for season, season_results in existing_results.items()]
@@ -511,6 +522,14 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
+    # save train-val-split
+    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    with open(train_split_filepath, 'w') as f:
+        train_split = {
+            'train_scene_dirs': train_scene_dirs,
+            'val_scene_dirs': val_scene_dirs
+        }
+        json.dump(train_split, f, indent=4)
     # get patch_paths
     train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
@@ -532,17 +551,11 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
-    # save model history, train-val split
-    history_filepath = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
-    with open(train_split_filepath, 'w') as f:
-        train_split = {
-            'train_scene_dirs': train_scene_dirs,
-            'val_scene_dirs': val_scene_dirs
-        }
-        json.dump(train_split, f)
-    with open(history_filepath, 'wb') as f:
-        pickle.dump(history, f)
+    history = history.history
+    # save model history
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
+    with open(history_filepath, 'w') as f:
+        json.dump(history, f, indent=4)
     print("Model history saved to: ", history_filepath)
     return None
 
@@ -557,9 +570,10 @@ def train_fc_densenet_on_season(season, config):
         'by_season',
         'sen12ms_season_{}_FC-DenseNet_weights.h5'\
             .format(season))
-    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    if os.path.exists(weights_path) and os.path.exists(history_path):
-        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
         return
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
@@ -576,9 +590,10 @@ def train_fc_densenet_on_continent(continent, config):
         'by_season',
         'sen12ms_season_{}_FC-DenseNet_weights.h5'\
             .format(continent))
-    history_path = weights_path.split('_weights.h5')[0] + '_history.pkl'
-    if os.path.exists(weights_path) and os.path.exists(history_path):
-        print('model {} and history {} already exist! skipping training'.format(weights_path, history_path))
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
         return
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
@@ -599,15 +614,16 @@ def main(args):
         os.environ["CUDA_VISIBLE_DEVICES"] = GPU_ID
     # train new models on all seasons/continents
     if args.train:
-        # finish training resnet models
+        # train resnet models
         for continent in config['all_continents']:
-            if continent != 'Africa':
-                train_resnet_on_continent(continent, config)
-        # train densenet models
-        for continent in config['all_continents']:
-            train_fc_densenet_on_continent(continent, config)
+            train_resnet_on_continent(continent, config)
         for season in config['all_seasons']:
-            train_fc_densenet_on_season(season, config)
+            train_resnet_on_season(season, config)
+        # train densenet models
+        # for continent in config['all_continents']:
+        #     train_fc_densenet_on_continent(continent, config)
+        # for season in config['all_seasons']:
+        #     train_fc_densenet_on_season(season, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)

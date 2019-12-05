@@ -3,6 +3,9 @@
 __pycache__/*
 retired_scripts/*
 saved_models/*
+saved_models_old/*
+results/*
+results_old/*
 CBAM-keras/*
 DenseNet/*
 CBAM-keras

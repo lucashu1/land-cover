@@ -65,7 +65,7 @@
     },
     "resnet_params": {
         "learning_rate":0.0005,
-        "batch_size":128,
+        "batch_size":64,
         "depth": 50
     },
     "fc_densenet_params": {
