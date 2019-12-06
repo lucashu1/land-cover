@@ -279,7 +279,7 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
               validation_data=(X_val, y_val),
               shuffle=True,
               callbacks=callbacks)
-    history = history.history
+    history = land_cover_utils.make_history_json_serializable(history.history)
     print("Done training!")
     # save model history
     with open(history_filepath, 'w') as f:
@@ -328,7 +328,7 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
-    history = history.history
+    history = land_cover_utils.make_history_json_serializable(history.history)
     # save model history
     with open(history_filepath, 'w') as f:
         json.dump(history, f, indent=4)
@@ -551,7 +551,7 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
-    history = history.history
+    history = land_cover_utils.make_history_json_serializable(history.history)
     # save model history
     history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
     with open(history_filepath, 'w') as f:

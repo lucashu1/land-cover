@@ -22,6 +22,16 @@ def json_keys_to_int(x):
     except:
         return x
 
+def make_history_json_serializable(history):
+    '''
+    Make keras history.history object JSON serializable
+    '''
+    new_history = {}
+    for k, v in history.items():
+        if isinstance(v, list):
+            new_history[k] = [float(x) for x in v]
+    return new_history
+
 def get_label_encoder(config):
     '''
     Uses config_dict's landuse_class info to get an sklearn label_encoder
