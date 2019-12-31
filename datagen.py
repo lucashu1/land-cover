@@ -72,7 +72,9 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             assert s2.shape[0] == self.input_size
 
             # check for missing labels
-            num_unknown = np.count_nonzero(landuse==0) + np.count_nonzero(landuse==15)
+            num_unknown = (np.count_nonzero(landuse==0)
+                + np.count_nonzero(landuse==15)
+                + np.count_nonzero(landuse==23))
             if num_unknown > 0:
                 continue
 

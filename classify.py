@@ -557,7 +557,7 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
     with open(history_filepath, 'w') as f:
         json.dump(history, f, indent=4)
     print("Model history saved to: ", history_filepath)
-    return None
+    return model, history
 
 def train_fc_densenet_on_season(season, config):
     '''
@@ -587,8 +587,8 @@ def train_fc_densenet_on_continent(continent, config):
     print("--- Training FC-DenseNet model on {} ---".format(continent))
     weights_path = os.path.join(
         config['model_save_dir'],
-        'by_season',
-        'sen12ms_season_{}_FC-DenseNet_weights.h5'\
+        'by_continent',
+        'sen12ms_continent_{}_FC-DenseNet_weights.h5'\
             .format(continent))
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
@@ -615,15 +615,15 @@ def main(args):
     # train new models on all seasons/continents
     if args.train:
         # train resnet models
-        for continent in config['all_continents']:
-            train_resnet_on_continent(continent, config)
-        for season in config['all_seasons']:
-            train_resnet_on_season(season, config)
-        # train densenet models
         # for continent in config['all_continents']:
-        #     train_fc_densenet_on_continent(continent, config)
+        #     train_resnet_on_continent(continent, config)
         # for season in config['all_seasons']:
-        #     train_fc_densenet_on_season(season, config)
+        #     train_resnet_on_season(season, config)
+        # train densenet models
+        for continent in config['all_continents']:
+            train_fc_densenet_on_continent(continent, config)
+        for season in config['all_seasons']:
+            train_fc_densenet_on_season(season, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)
