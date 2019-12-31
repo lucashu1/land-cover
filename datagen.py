@@ -40,6 +40,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 
         self.label_encoder = get_label_encoder(config)
         self.num_classes = len(self.label_encoder.classes_)
+        self.unknown_classes = config['landuse_unknown_classes']
 
         self.max_input_val = config['s2_max_val']
         self.do_color_aug = config['training_params']['do_color_aug']
@@ -71,10 +72,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             assert s2.shape[0] == landuse.shape[0]
             assert s2.shape[0] == self.input_size
 
-            # check for missing labels
-            num_unknown = (np.count_nonzero(landuse==0)
-                + np.count_nonzero(landuse==15)
-                + np.count_nonzero(landuse==23))
+            # check for missing/unknown labels
+            num_unknown = np.sum([np.count_nonzero(landuse==c) for c in self.unknown_classes])
             if num_unknown > 0:
                 continue
 

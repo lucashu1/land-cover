@@ -39,6 +39,7 @@
         "36": 30,
         "35": 30
     },
+    "landuse_unknown_classes": [0, 15, 23, 37],
     "experiment_params": {
         "num_models_per_season": 5,
         "train_scene_sampling_seed": 0,
