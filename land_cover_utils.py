@@ -48,6 +48,26 @@ def get_label_encoder(config):
     label_encoder.classes_ = np.array(class_nums_sorted)
     return label_encoder
 
+def get_continents_label_encoder(config):
+    '''
+    Uses config_dict's all_continents info to get an sklearn label_encoder
+    Output: sklearn label_encoder
+    '''
+    all_continents = config['all_continents']
+    continents_label_encoder = LabelEncoder()
+    continents_label_encoder.classes_ = np.array(all_continents)
+    return continents_label_encoder
+
+def get_seasons_label_encoder(config):
+    '''
+    Uses config_dict's all_seasons info to get an sklearn label_encoder
+    Output: sklearn label_encoder
+    '''
+    all_seasons = config['all_seasons']
+    seasons_label_encoder = LabelEncoder()
+    seasons_label_encoder.classes_ = np.array(all_seasons)
+    return seasons_label_encoder
+
 def patch_to_subpatches(patch, config):
     '''
     Input: single patch: B, W, H

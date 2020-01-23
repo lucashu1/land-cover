@@ -8,7 +8,8 @@ import os
 import math
 import numpy as np
 import keras.utils
-from land_cover_utils import get_label_encoder
+from land_cover_utils import get_label_encoder, \
+    get_continents_label_encoder, get_seasons_label_encoder
 
 def color_aug(colors):
     # TODO: update this
@@ -27,7 +28,7 @@ def color_aug(colors):
 class SegmentationDataGenerator(keras.utils.Sequence):
     'Generates semantic segmentation batch data for Keras'
     
-    def __init__(self, patch_paths, config):
+    def __init__(self, patch_paths, config, return_continents=False, return_seasons=False):
         'Initialization'
 
         self.patch_paths = patch_paths
@@ -45,6 +46,11 @@ class SegmentationDataGenerator(keras.utils.Sequence):
         self.max_input_val = config['s2_max_val']
         self.do_color_aug = config['training_params']['do_color_aug']
 
+        self.return_continents = return_continents
+        self.return_seasons = return_seasons
+        self.continents_label_encoder = get_continents_label_encoder(config)
+        self.seasons_label_encoder = get_seasons_label_encoder(config)
+
         self.on_epoch_end() # shuffle indices
 
     def __len__(self):
@@ -58,6 +64,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 
         x_batch = []
         y_batch = []
+        continents = []
+        seasons = []
         
         for i, patch_path in enumerate(batch_paths):
             s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
@@ -88,16 +96,39 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             landuse = landuse.reshape((self.input_size, self.input_size))
             y_batch.append(landuse)
 
+            # get season, continent
+            continent_season = patch_path.split('/scene_')[0].split('/')[-1]
+            continent = continent_season.split('-')[0]
+            continents.append(continent)
+            season = continent_season.split('-')[1]
+            seasons.append(season)
+
         # convert x, y to numpy arrays
         x_batch = np.array(x_batch)
         y_batch = np.array(y_batch)
+        continents_batch = self.continents_label_encoder.transform(continents)
+        seasons_batch = self.seasons_label_encoder.transform(seasons)
 
-        # one-hot encode y
+        # one-hot encode labels
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
+        continents_batch = keras.utils.to_categorical(continents_batch, \
+            num_classes=continents_batch.shape[1])
+        seasons_batch = keras.utils.to_categorical(seasons_batch, \
+            num_classes=seasons_batch.shape[1])
 
         assert x_batch.shape[0] == y_batch.shape[0]
+        assert continents_batch.shape[0] == seasons.shape[0]
+        assert continents_batch.shape[0] == x_batch.shape[0]
 
-        return x_batch.copy(), y_batch.copy()
+        if not return_continents and not return_seasons:
+            return x_batch.copy(), y_batch.copy()
+        elif return_continents and not return_seasons:
+            return x_batch.copy(), (y_batch.copy(), continents_batch.copy())
+        elif return_seasons and not return_continents:
+            return x_batch.copy(), (y_batch.copy(), seasons_batch.copy())
+        else:
+            return x_batch.copy(), \
+                (y_batch.copy(), continents_batch.copy(), seasons_batch.copy())
 
     def on_epoch_end(self):
         'Shuffle indices'
@@ -107,7 +138,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 class SubpatchDataGenerator(keras.utils.Sequence):
     'Generates subpatch batch data for Keras'
     
-    def __init__(self, patch_paths, config):
+    def __init__(self, patch_paths, config, return_continents=False, return_seasons=False):
         'Initialization'
 
         self.patch_paths = patch_paths
@@ -124,6 +155,11 @@ class SubpatchDataGenerator(keras.utils.Sequence):
         self.max_input_val = config['s2_max_val']
         self.do_color_aug = config['training_params']['do_color_aug']
 
+        self.return_continents = return_continents
+        self.return_seasons = return_seasons
+        self.continents_label_encoder = get_continents_label_encoder(config)
+        self.seasons_label_encoder = get_seasons_label_encoder(config)
+
         self.on_epoch_end() # shuffle indices
 
     def __len__(self):
@@ -137,6 +173,8 @@ class SubpatchDataGenerator(keras.utils.Sequence):
 
         x_batch = []
         labels_batch = []
+        continents_batch = []
+        seasons_batch = []
         
         for i, subpatch_path in enumerate(batch_paths):
             if subpatch_path.endswith(".npz"):
@@ -166,19 +204,44 @@ class SubpatchDataGenerator(keras.utils.Sequence):
             else:
                 x_batch.append(data)
 
-        # convert x_batch t0 numpy array
+            # get season, continent
+            continent_season = patch_path.split('/scene_')[0].split('/')[-1]
+            continent = continent_season.split('-')[0]
+            continents.append(continent)
+            season = continent_season.split('-')[1]
+            seasons.append(season)
+
+        # convert x_batch to numpy array
         x_batch = np.array(x_batch)
 
         # get one-hot y_batch from labels
         y_batch = self.label_encoder.transform(labels_batch)
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
 
+        # one-hot encode continents, seasons
+        continents_batch = self.continents_label_encoder.transform(continents_batch)
+        continents_batch = keras.utils.to_categorical(continents_batch, \
+            num_classes=continents_batch.shape[1])
+        seasons_batch = self.seasons_label_encoder.transform(seasons_batch)
+        seasons_batch = keras.utils.to_categorical(seasons_batch, \
+            num_classes=seasons_batch.shape[1])
+
         assert x_batch.shape[0] == y_batch.shape[0]
+        assert continents_batch.shape[0] == seasons_batch.shape[0]
+        assert continents_batch.shape[0] == x_batch.shape[0]
         #if (x_batch.shape[0] != self.batch_size):
             #print('warning: x_batch.shape[0] ({}) < batch_size ({})'\
             #    .format(x_batch.shape[0], self.batch_size))
 
-        return x_batch.copy(), y_batch.copy()
+        if not return_continents and not return_seasons:
+            return x_batch.copy(), y_batch.copy()
+        elif return_continents and not return_seasons:
+            return x_batch.copy(), (y_batch.copy(), continents_batch.copy())
+        elif return_seasonsa and not return_continents:
+            return x_batch.copy(), (y_batch.copy(), seasons_batch.copy())
+        else:
+            return x_batch.copy(), \
+                (y_batch.copy(), continents_batch.copy(), seasons_batch.copy())
 
     def on_epoch_end(self):
         'Shuffle indices'

@@ -97,7 +97,7 @@ def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
     assert X.shape[0] == y.shape[0]
     return X, y
 
-def get_compiled_resnet(config, label_encoder):
+def get_compiled_resnet(config, label_encoder, predict_continents=False, predict_seasons=False):
     '''
     Input: config dict, label_encoder
     Output: compiled ResNet model
@@ -117,7 +117,8 @@ def get_compiled_resnet(config, label_encoder):
         metrics=['accuracy'])
     return model
 
-def get_compiled_fc_densenet(config, label_encoder):
+def get_compiled_fc_densenet(config, label_encoder, \
+    predict_continents=False, predict_seasons=False):
     '''
     Input: config_dict, label_encoder
     Output: compiled FC-DenseNet model
