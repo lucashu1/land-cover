@@ -3,7 +3,7 @@ Author: Lucas Hu (lucashu@usc.edu)
 Timestamp: Fall 2019
 Filename: classify.py
 Goal: Classify land cover of various SEN12MS scenes
-Model used: ResNet v1
+Models used: ResNet v1, FC-DenseNet
 '''
 
 import warnings
@@ -17,7 +17,8 @@ from collections import defaultdict
 import numpy as np
 from scipy import stats
 import keras
-from keras.models import load_model
+from keras.layers import Dense, Flatten
+from keras.models import Model, load_model
 from keras.optimizers import Adam, Nadam
 from keras.callbacks import ModelCheckpoint, \
     LearningRateScheduler, ReduceLROnPlateau, \
@@ -97,7 +98,8 @@ def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
     assert X.shape[0] == y.shape[0]
     return X, y
 
-def get_compiled_resnet(config, label_encoder, predict_continents=False, predict_seasons=False):
+def get_compiled_resnet(config, label_encoder, \
+    predict_continents=False, predict_seasons=False):
     '''
     Input: config dict, label_encoder
     Output: compiled ResNet model
@@ -111,11 +113,33 @@ def get_compiled_resnet(config, label_encoder, predict_continents=False, predict
         num_classes=len(label_encoder.classes_), \
         depth=config['resnet_params']['depth'], \
         attention_module=None)
-    # compile
-    model.compile(loss='categorical_crossentropy',
-        optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
-        metrics=['accuracy'])
-    return model
+    if not predict_continents and not predict_seasons:
+        model.compile(loss='categorical_crossentropy',
+            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return model
+    if predict_continents and predict_seasons:
+        print('WARNING: cannot have predict_continents and predict_seasons both set to True!')
+    # return model with 'continent' output
+    if predict_continents:
+        last_flatten = list(filter(lambda layer: 'flatten' in layer.name, model.layers))[-1] # end of last residual block
+        continent_output = Dense(len(config['all_continents']), activation='softmax')(last_flatten.output)
+        full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
+        full_model.compile(loss='categorical_crossentropy',
+            loss_weights=[1,-1],
+            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return full_model
+    # return model with 'season' output
+    elif predict_seasons:
+        last_flatten = list(filter(lambda layer: 'flatten' in layer.name, model.layers))[-1] # end of last residual block
+        season_output = Dense(len(config['all_seasons']), activation='softmax')(last_flatten.output)
+        full_model = Model(model.inputs[0], [model.outputs[0], season_output])
+        full_model.compile(loss='categorical_crossentropy',
+            loss_weights=[1,-1],
+            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return full_model
 
 def get_compiled_fc_densenet(config, label_encoder, \
     predict_continents=False, predict_seasons=False):
@@ -131,11 +155,34 @@ def get_compiled_fc_densenet(config, label_encoder, \
         classes=num_classes, \
         nb_dense_block=config['fc_densenet_params']['nb_dense_block'], \
         activation='softmax')
-    # compile
-    model.compile(loss='categorical_crossentropy',
-        optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
-        metrics=['accuracy'])
-    return model
+    if not predict_continents and not predict_seasons:
+        model.compile(loss='categorical_crossentropy',
+            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return model
+    if predict_continents and predict_seasons:
+        print('WARNING: cannot have predict_continents and predict_seasons both set to True!')
+    if predict_continents:
+        last_concat = list(filter(lambda layer: 'concatenate' in layer.name, model.layers))[-1] # end of last DenseNet block
+        continent_output = Flatten()(last_concat.output)
+        continent_output = Dense(len(config['all_continents']), activation='softmax')(continent_output)
+        full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
+        full_model.compile(loss='categorical_crossentropy',
+            loss_weights=[1,-1],
+            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return full_model
+    elif predict_seasons:
+        last_concat = list(filter(lambda layer: 'concatenate' in layer.name, model.layers))[-1] # end of last DenseNet block
+        season_output = Flatten()(last_concat.output)
+        season_output = Dense(len(config['all_seasons']), activation='softmax')(season_output)
+        full_model = Model(model.inputs[0], [model.outputs[0], season_output])
+        full_model.compile(loss='categorical_crossentropy',
+            loss_weights=[1,-1],
+            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
+            metrics=['accuracy'])
+        return full_model
+
 
 def get_callbacks(filepath, config):
     '''
@@ -288,7 +335,8 @@ def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids,
     print("Model history saved to: ", history_filepath)
     return model, history
 
-def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
+def train_resnet_on_scene_dirs(scene_dirs, weights_path, config, \
+    predict_continents=False, predict_seasons=False):
     '''
     Input: scene_dirs, weights_path, config
     Output: trained ResNet model (saved to disk), training history
@@ -312,11 +360,13 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config):
     val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_resnet(config, label_encoder)
+    model = get_compiled_resnet(config, label_encoder, predict_continents, predict_seasons)
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
-    train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config)
-    val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config)
+    train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config, \
+        predict_continents, predict_seasons)
+    val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config, \
+        predict_continents, predict_seasons)
     # fit keras model
     print("Training keras model...")
     history = None
@@ -342,16 +392,26 @@ def train_resnet_on_continent(continent, config):
     Output: trained ResNet model (saved to disk), training history
     '''
     print("--- Training ResNet model on {} ---".format(continent))
+    # get filepaths
+    if not predict_continents and not predict_seasons:
+        filename = 'sen12_continent_{}_resnet-{}_weights.h5'.format(continent, config['resnet_params']['depth'])
+    elif predict_continents and not predict_seasons:
+        filename = 'sen12_continent_{}_resnet-{}_predict-continents_weights.h5'.format(continent, config['resnet_params']['depth'])
+    elif predict_seasons and not predict_continents:
+        filename = 'sen12_continent_{}_resnet-{}_predict-seasons_weights.h5'.format(continent, config['resnet_params']['depth'])
+    else:
+        filename = 'sen12_continent_{}_resnet-{}_predict-continents-seasons_weights.h5'.format(continent, config['resnet_params']['depth'])
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_continent',
-        'sen12ms_continent_{}_resnet-{}_weights.h5'\
-            .format(continent, config['resnet_params']['depth']))
+        filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
     if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
         print('files for model {} already exist! skipping training'.format(weights_path))
         return
+    # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -362,16 +422,26 @@ def train_resnet_on_season(season, config):
     Output: trained ResNet model (saved to disk), training history
     '''
     print("--- Training ResNet model on {} ---".format(season))
+    # get filepaths
+    if not predict_continents and not predict_seasons:
+        filename = 'sen12_season_{}_resnet-{}_weights.h5'.format(season, config['resnet_params']['depth'])
+    elif predict_continents and not predict_seasons:
+        filename = 'sen12_season_{}_resnet-{}_predict-continents_weights.h5'.format(season, config['resnet_params']['depth'])
+    elif predict_seasons and not predict_continents:
+        filename = 'sen12_season_{}_resnet-{}_predict-seasons_weights.h5'.format(season, config['resnet_params']['depth'])
+    else:
+        filename = 'sen12_season_{}_resnet-{}_predict-continents-seasons_weights.h5'.format(season, config['resnet_params']['depth'])
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
-        'sen12ms_season_{}_resnet-{}_weights.h5'\
-            .format(season, config['resnet_params']['depth']))
+        filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
     if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
         print('files for model {} already exist! skipping training'.format(weights_path))
         return
+    # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -513,7 +583,8 @@ def evaluate_saved_models_on_each_season(config):
             test_seasons=seasons, test_scene_ids=scenes, \
             results_path=results_path)
 
-def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
+def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
+    predict_continents=False, predict_seasons=False):
     '''
     Input: scene_dirs, weights_path, config
     Output: trained FC-DenseNet model (saved to disk), training history
@@ -536,11 +607,13 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_fc_densenet(config, label_encoder)
+    model = get_compiled_fc_densenet(config, label_encoder, predict_continents, predict_seasons)
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
-    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config)
-    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config)
+    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config, \
+        predict_continents, predict_seasons)
+    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config, \
+        predict_continents, predict_seasons)
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -560,42 +633,63 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config):
     print("Model history saved to: ", history_filepath)
     return model, history
 
-def train_fc_densenet_on_season(season, config):
+def train_fc_densenet_on_season(season, config, predict_continents=False, predict_seasons=False):
     '''
     Input: continent, config
     Output: trained DenseNet model (saved to disk), training history
     '''
     print("--- Training FC-DenseNet model on {} ---".format(season))
+    # get filepaths
+    if not predict_continents and not predict_seasons:
+        filename = 'sen12_season_{}_FC-DenseNet_weights.h5'.format(season)
+    elif predict_continents and not predict_seasons:
+        filename = 'sen12_season_{}_FC-DenseNet_predict-continents_weights.h5'.format(season)
+    elif predict_seasons and not predict_continents:
+        filename = 'sen12_season_{}_FC-DenseNet_predict-seasons_weights.h5'.format(season)
+    else:
+        filename = 'sen12_season_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(season)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
-        'sen12ms_season_{}_FC-DenseNet_weights.h5'\
-            .format(season))
+        filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model has already been trained
     if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
         print('files for model {} already exist! skipping training'.format(weights_path))
         return
+    # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config, mode='segmentation')
-    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
+        predict_continents, predict_seasons)
     return model, history
 
-def train_fc_densenet_on_continent(continent, config):
+def train_fc_densenet_on_continent(continent, config, predict_continents=False, predict_seasons=False):
     '''
     Input: season, config
     Output: trained DenseNet model (saved to disk), training history
     '''
     print("--- Training FC-DenseNet model on {} ---".format(continent))
+    # get filepaths
+    if not predict_continents and not predict_seasons:
+        filename = 'sen12_continent_{}_FC-DenseNet_weights.h5'.format(continent)
+    elif predict_continents and not predict_seasons:
+        filename = 'sen12_continent_{}_FC-DenseNet_predict-continents_weights.h5'.format(continent)
+    elif predict_seasons and not predict_continents:
+        filename = 'sen12_continent_{}_FC-DenseNet_predict-seasons_weights.h5'.format(continent)
+    else:
+        filename = 'sen12_continent_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(continent)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_continent',
-        'sen12ms_continent_{}_FC-DenseNet_weights.h5'\
-            .format(continent))
+        filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
     if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
         print('files for model {} already exist! skipping training'.format(weights_path))
         return
+    # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config, mode='segmentation')
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
@@ -613,6 +707,21 @@ def main(args):
     GPU_ID = config['training_params'].get('gpu_id')
     if GPU_ID is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = GPU_ID
+    # show summary of keras models
+    if args.model_summary:
+        label_encoder = land_cover_utils.get_label_encoder(config)
+        resnet = get_compiled_resnet(config, label_encoder, predict_seasons=True)
+        print('----------- RESNET MODEL SUMMARY ----------')
+        #print(resnet.summary())
+        print('inputs: ', resnet.inputs)
+        print('outputs: ', resnet.outputs)
+        print()
+        fc_densenet = get_compiled_fc_densenet(config, label_encoder, predict_seasons=True)
+        print('---------- FC-DENSENET MODEL SUMMARY ----------')
+        #print(fc_densenet.summary())
+        print('inputs: ', fc_densenet.inputs)
+        print('outputs: ', fc_densenet.outputs)
+        print()
     # train new models on all seasons/continents
     if args.train:
         # train resnet models
@@ -634,6 +743,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--config', dest='config_path', help='config JSON path')
     parser.add_argument('--train', dest='train', action='store_true', help='train new models')
     parser.add_argument('--test', dest='test', action='store_true', help='test saved models')
+    parser.add_argument('--model_summary', dest='model_summary', action='store_true', help='print model summaries')
     args = parser.parse_args()
     main(args)
 
