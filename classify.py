@@ -126,7 +126,7 @@ def get_compiled_resnet(config, label_encoder, \
         continent_output = Dense(len(config['all_continents']), activation='softmax')(last_flatten.output)
         full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
         full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-1],
+            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
             optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
             metrics=['accuracy'])
         return full_model
@@ -136,7 +136,7 @@ def get_compiled_resnet(config, label_encoder, \
         season_output = Dense(len(config['all_seasons']), activation='softmax')(last_flatten.output)
         full_model = Model(model.inputs[0], [model.outputs[0], season_output])
         full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-1],
+            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
             optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
             metrics=['accuracy'])
         return full_model
@@ -168,7 +168,7 @@ def get_compiled_fc_densenet(config, label_encoder, \
         continent_output = Dense(len(config['all_continents']), activation='softmax')(continent_output)
         full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
         full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-1],
+            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
             optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
             metrics=['accuracy'])
         return full_model
@@ -178,7 +178,7 @@ def get_compiled_fc_densenet(config, label_encoder, \
         season_output = Dense(len(config['all_seasons']), activation='softmax')(season_output)
         full_model = Model(model.inputs[0], [model.outputs[0], season_output])
         full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-1],
+            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
             optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
             metrics=['accuracy'])
         return full_model
