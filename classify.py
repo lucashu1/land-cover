@@ -16,6 +16,7 @@ import json
 from collections import defaultdict
 import numpy as np
 from scipy import stats
+import tensorflow as tf
 import keras
 from keras.layers import Dense, Flatten
 from keras.models import Model, load_model
@@ -85,14 +86,14 @@ def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
     # get landuse labels
     landuse = lc[:, :, :, LCBands.landuse.value-1]
     landuse = land_cover_utils.combine_landuse_classes(landuse, config)
-    # delete patches with '0' landuse values
-    zero_label_inds = np.where(labels == 0)[0]
-    if config['verbose'] >= 1 and len(zero_label_inds) > 0:
-        print('Removing {} instances with "0" landuse label'.format(len(zero_label_inds)))
-    landuse = np.delete(landuse, zero_label_inds, axis=0)
-    s2 = np.delete(s2, zero_label_inds, axis=0)
+    # delete patches with unknown landuse values
+    unknown_landuse_inds = np.where(np.isin(landuse, config['landuse_unknown_classes'])==True)[0]
+    if config['verbose'] >= 1 and len(unknown_landuse_inds) > 0:
+        print('Removing {} instances with unknown landuse label'.format(len(unknown_landuse_inds)))
+    landuse = np.delete(landuse, unknown_landuse_inds, axis=0)
+    s2 = np.delete(s2, unknown_landuse_inds, axis=0)
     # encode labels
-    landuse = label_encoder.transform(landuse.flatten()).reshape((img_size,img_size))
+    landuse = label_encoder.transform(landuse.flatten()).reshape((landuse.shape[0],img_size,img_size))
     y = keras.utils.to_categorical(landuse, num_classes=num_classes)
     X = s2
     assert X.shape[0] == y.shape[0]
@@ -459,7 +460,7 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
             model = get_compiled_resnet(config, label_encoder)
             model.load_weights(model_path)
         elif 'weights' in model_path and 'DenseNet' in model_path:
-            model = get_compiled_densenet(config, label_encoder)
+            model = get_compiled_fc_densenet(config, label_encoder)
             model.load_weights(model_path)
         else:
             model = load_model(model_path)
@@ -497,7 +498,7 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
             model = get_compiled_resnet(config, label_encoder)
             model.load_weights(model_path)
         elif 'weights' in model_path and 'DenseNet' in model_path:
-            model = get_compiled_densenet(config, label_encoder)
+            model = get_compiled_fc_densenet(config, label_encoder)
             model.load_weights(model_path)
         else:
             model = load_model(model_path)
@@ -641,13 +642,13 @@ def train_fc_densenet_on_season(season, config, predict_continents=False, predic
     print("--- Training FC-DenseNet model on {} ---".format(season))
     # get filepaths
     if not predict_continents and not predict_seasons:
-        filename = 'sen12_season_{}_FC-DenseNet_weights.h5'.format(season)
+        filename = 'sen12ms_season_{}_FC-DenseNet_weights.h5'.format(season)
     elif predict_continents and not predict_seasons:
-        filename = 'sen12_season_{}_FC-DenseNet_predict-continents_weights.h5'.format(season)
+        filename = 'sen12ms_season_{}_FC-DenseNet_predict-continents_weights.h5'.format(season)
     elif predict_seasons and not predict_continents:
-        filename = 'sen12_season_{}_FC-DenseNet_predict-seasons_weights.h5'.format(season)
+        filename = 'sen12ms_season_{}_FC-DenseNet_predict-seasons_weights.h5'.format(season)
     else:
-        filename = 'sen12_season_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(season)
+        filename = 'sen12ms_season_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(season)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
@@ -672,13 +673,13 @@ def train_fc_densenet_on_continent(continent, config, predict_continents=False, 
     print("--- Training FC-DenseNet model on {} ---".format(continent))
     # get filepaths
     if not predict_continents and not predict_seasons:
-        filename = 'sen12_continent_{}_FC-DenseNet_weights.h5'.format(continent)
+        filename = 'sen12ms_continent_{}_FC-DenseNet_weights.h5'.format(continent)
     elif predict_continents and not predict_seasons:
-        filename = 'sen12_continent_{}_FC-DenseNet_predict-continents_weights.h5'.format(continent)
+        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-continents_weights.h5'.format(continent)
     elif predict_seasons and not predict_continents:
-        filename = 'sen12_continent_{}_FC-DenseNet_predict-seasons_weights.h5'.format(continent)
+        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-seasons_weights.h5'.format(continent)
     else:
-        filename = 'sen12_continent_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(continent)
+        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(continent)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_continent',
@@ -702,11 +703,14 @@ def main(args):
     config_json_path = args.config_path
     with open(config_json_path, 'r') as f:
         config = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
-    # select GPU
+    # configure GPU
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     GPU_ID = config['training_params'].get('gpu_id')
     if GPU_ID is not None:
         os.environ["CUDA_VISIBLE_DEVICES"] = GPU_ID
+    tf_config = tf.ConfigProto()
+    tf_config.gpu_options.allow_growth = True
+    session = tf.Session(config=tf_config)
     # show summary of keras models
     if args.model_summary:
         label_encoder = land_cover_utils.get_label_encoder(config)

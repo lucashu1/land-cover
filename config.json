@@ -48,7 +48,7 @@
         "val_split_seed": 10
     },
     "training_params": {
-        "gpu_id":"3",
+        "gpu_id":"1",
         "patch_size":256,
         "subpatch_size": 64,
         "val_size": 0.20,

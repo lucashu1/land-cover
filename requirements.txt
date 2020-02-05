@@ -4,6 +4,7 @@ scikit-learn
 matplotlib
 pandas
 keras
-tensorflow
+#tensorflow
 rasterio
+scikit-image
 
