@@ -1,5 +1,5 @@
 # land-cover
-CNNs for land cover mapping
+Deep learning for land cover mapping
 
 ### Setup Instructions
 1. `git clone` this repository
