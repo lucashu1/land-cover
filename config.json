@@ -3,6 +3,8 @@
     "dataset_dir": "/data/datasets/sen12ms",
     "subpatches_dataset_dir":"/data/datasets/sen12ms_subpatches",
     "segmentation_dataset_dir":"/data/datasets/sen12ms_segmentation",
+    "subpatches_predictions_dir":"/data/lucas/sen12ms_subpatches_predictions",
+    "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/continents.json",

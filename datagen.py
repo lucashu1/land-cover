@@ -28,9 +28,11 @@ def color_aug(colors):
 class SegmentationDataGenerator(keras.utils.Sequence):
     'Generates semantic segmentation batch data for Keras'
     
-    def __init__(self, patch_paths, config, return_continents=False, return_seasons=False):
+    def __init__(self, patch_paths, config, return_labels=True, \
+        return_continents=False, return_seasons=False):
         'Initialization'
 
+        self.return_labels = return_labels
         self.patch_paths = patch_paths
         self.batch_size = config['fc_densenet_params']['batch_size']
         self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
@@ -51,7 +53,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
         self.continents_label_encoder = get_continents_label_encoder(config)
         self.seasons_label_encoder = get_seasons_label_encoder(config)
 
-        self.on_epoch_end() # shuffle indices
+        self.on_epoch_end()
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -64,8 +66,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 
         x_batch = []
         y_batch = []
-        continents = []
-        seasons = []
+        continents_batch = []
+        seasons_batch = []
         
         for i, patch_path in enumerate(batch_paths):
             s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
@@ -80,10 +82,11 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             assert s2.shape[0] == landuse.shape[0]
             assert s2.shape[0] == self.input_size
 
-            # check for missing/unknown labels
-            num_unknown = np.sum([np.count_nonzero(landuse==c) for c in self.unknown_classes])
-            if num_unknown > 0:
-                continue
+            if self.return_labels:
+                # check for missing/unknown labels
+                num_unknown = np.sum([np.count_nonzero(landuse==c) for c in self.unknown_classes])
+                if num_unknown > 0:
+                    continue
 
             # setup x
             if self.do_color_aug:
@@ -91,23 +94,28 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             else:
                 x_batch.append(s2)
 
-            # setup y (apply label-encoder)
-            landuse = self.label_encoder.transform(landuse.flatten())
-            landuse = landuse.reshape((self.input_size, self.input_size))
-            y_batch.append(landuse)
+            if self.return_labels:
+                # setup y (apply label-encoder)
+                landuse = self.label_encoder.transform(landuse.flatten())
+                landuse = landuse.reshape((self.input_size, self.input_size))
+                y_batch.append(landuse)
 
             # get season, continent
             continent_season = patch_path.split('/scene_')[0].split('/')[-1]
             continent = continent_season.split('-')[0]
-            continents.append(continent)
+            continents_batch.append(continent)
             season = continent_season.split('-')[1]
-            seasons.append(season)
+            seasons_batch.append(season)
+
+        # return X only
+        if not self.return_labels:
+            return np.array(x_batch)
 
         # convert x, y to numpy arrays
         x_batch = np.array(x_batch)
         y_batch = np.array(y_batch)
-        continents_batch = self.continents_label_encoder.transform(continents)
-        seasons_batch = self.seasons_label_encoder.transform(seasons)
+        continents_batch = self.continents_label_encoder.transform(continents_batch)
+        seasons_batch = self.seasons_label_encoder.transform(seasons_batch)
 
         # one-hot encode labels
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
@@ -133,18 +141,21 @@ class SegmentationDataGenerator(keras.utils.Sequence):
     def on_epoch_end(self):
         'Shuffle indices'
         self.indices = np.arange(len(self.patch_paths))
-        np.random.shuffle(self.indices)
+        if self.return_labels:
+            np.random.shuffle(self.indices)
 
 class SubpatchDataGenerator(keras.utils.Sequence):
     'Generates subpatch batch data for Keras'
     
-    def __init__(self, patch_paths, config, return_continents=False, return_seasons=False):
+    def __init__(self, subpatch_paths, config, return_labels=True, \
+        return_continents=False, return_seasons=False):
         'Initialization'
 
-        self.patch_paths = patch_paths
+        self.return_labels = return_labels
+        self.subpatch_paths = subpatch_paths
         self.batch_size = config['resnet_params']['batch_size']
-        self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
-        # assert self.steps_per_epoch * batch_size < len(patch_paths)
+        self.steps_per_epoch = math.ceil(len(self.subpatch_paths) / self.batch_size)
+        # assert self.steps_per_epoch * batch_size < len(subpatch_paths)
 
         self.input_size = config['training_params']['subpatch_size']
         self.num_channels = len(config['s2_input_bands'])
@@ -160,7 +171,7 @@ class SubpatchDataGenerator(keras.utils.Sequence):
         self.continents_label_encoder = get_continents_label_encoder(config)
         self.seasons_label_encoder = get_seasons_label_encoder(config)
 
-        self.on_epoch_end() # shuffle indices
+        self.on_epoch_end()
 
     def __len__(self):
         'Denotes the number of batches per epoch'
@@ -169,7 +180,7 @@ class SubpatchDataGenerator(keras.utils.Sequence):
     def __getitem__(self, index):
         'Generate one batch of data'
         indices = self.indices[index*self.batch_size:(index+1)*self.batch_size]
-        batch_paths = [self.patch_paths[i] for i in indices]
+        batch_paths = [self.subpatch_paths[i] for i in indices]
 
         x_batch = []
         labels_batch = []
@@ -191,11 +202,12 @@ class SubpatchDataGenerator(keras.utils.Sequence):
                 y_idx = np.random.randint(0, data_size - self.input_size)
                 data = data[y_idx:y_idx+self.input_size, x_idx:x_idx+self.input_size, :]
 
-            # get label from filepath
-            label = int(subpatch_path.split("label_")[-1].split(".npy")[0])
-            if label == 0:
-                continue
-            labels_batch.append(label)
+            if self.return_labels:
+                # get label from filepath
+                label = int(subpatch_path.split("label_")[-1].split(".npy")[0])
+                if label == 0:
+                    continue
+                labels_batch.append(label)
 
             # setup x
             data /= self.max_input_val
@@ -205,14 +217,18 @@ class SubpatchDataGenerator(keras.utils.Sequence):
                 x_batch.append(data)
 
             # get season, continent
-            continent_season = patch_path.split('/scene_')[0].split('/')[-1]
+            continent_season = subpatch_path.split('/scene_')[0].split('/')[-1]
             continent = continent_season.split('-')[0]
-            continents.append(continent)
+            continents_batch.append(continent)
             season = continent_season.split('-')[1]
-            seasons.append(season)
+            seasons_batch.append(season)
 
         # convert x_batch to numpy array
         x_batch = np.array(x_batch)
+
+        # return X only
+        if not self.return_labels:
+            return np.array(x_batch)
 
         # get one-hot y_batch from labels
         y_batch = self.label_encoder.transform(labels_batch)
@@ -245,6 +261,7 @@ class SubpatchDataGenerator(keras.utils.Sequence):
 
     def on_epoch_end(self):
         'Shuffle indices'
-        self.indices = np.arange(len(self.patch_paths))
-        np.random.shuffle(self.indices)
+        self.indices = np.arange(len(self.subpatch_paths))
+        if self.return_labels:
+            np.random.shuffle(self.indices)
 

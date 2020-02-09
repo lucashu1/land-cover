@@ -46,7 +46,7 @@ import land_cover_utils
 
 ALL_SEASONS = [season for season in Seasons if season != Seasons.ALL]
 
-def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder):
+def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder, patch_ids=None):
     '''
     Input: s2, lc, config, label_encoder
     Output: X (s2 subpatches), y (one-hot labels)
@@ -55,8 +55,12 @@ def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder):
     s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
     s2 = s2.astype(np.float32) / config['s2_max_val'] # normalize S2
     # get subpatches
-    s2 = land_cover_utils.scene_to_subpatches(s2, config)
-    lc = land_cover_utils.scene_to_subpatches(lc, config)
+    if patch_ids is not None:
+        s2, patch_ids = land_cover_utils.scene_to_subpatches(s2, config, patch_ids)
+        lc, patch_ids = land_cover_utils.scene_to_subpatches(lc, config, patch_ids)
+    else:
+        s2 = land_cover_utils.scene_to_subpatches(s2, config)
+        lc = land_cover_utils.scene_to_subpatches(lc, config)
     # get majority classes
     labels = land_cover_utils.get_landuse_labels(lc, config)
     # remove instances with '0' mode label
@@ -65,15 +69,20 @@ def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder):
         print('Removing {} instances with "0" landuse label'.format(len(zero_label_inds)))
     labels = np.delete(labels, zero_label_inds, axis=0)
     s2 = np.delete(s2, zero_label_inds, axis=0)
+    if patch_ids is not None:
+        patch_ids = np.delete(patch_ids, zero_label_inds, axis=0)
     assert not (0 in labels)
     assert s2.shape[0] == labels.shape[0]
     # one-hot encode labels
     labels = label_encoder.transform(labels)
     y = keras.utils.to_categorical(labels, num_classes=len(label_encoder.classes_))
     X = s2
-    return X, y
+    if patch_ids is not None:
+        return X, y, patch_ids
+    else:
+        return X, y
 
-def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
+def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder, patch_ids=None):
     '''
     Input: s2, lc, config, label_encoder
     Output: X (s2 patches), y (one-hot land-use patches)
@@ -92,12 +101,17 @@ def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder):
         print('Removing {} instances with unknown landuse label'.format(len(unknown_landuse_inds)))
     landuse = np.delete(landuse, unknown_landuse_inds, axis=0)
     s2 = np.delete(s2, unknown_landuse_inds, axis=0)
+    if patch_ids is not None:
+        patch_ids = np.delete(patch_ids, unknown_landuse_inds, axis=0)
     # encode labels
     landuse = label_encoder.transform(landuse.flatten()).reshape((landuse.shape[0],img_size,img_size))
     y = keras.utils.to_categorical(landuse, num_classes=num_classes)
     X = s2
     assert X.shape[0] == y.shape[0]
-    return X, y
+    if patch_ids is not None:
+        return X, y, patch_ids
+    else:
+        return X, y
 
 def get_compiled_resnet(config, label_encoder, \
     predict_continents=False, predict_seasons=False):
@@ -184,7 +198,6 @@ def get_compiled_fc_densenet(config, label_encoder, \
             metrics=['accuracy'])
         return full_model
 
-
 def get_callbacks(filepath, config):
     '''
     Input: model save filepath, config
@@ -216,53 +229,6 @@ def get_train_val_scene_dirs(scene_dirs, config):
     train_scene_dirs = list(set(scene_dirs) - set(val_scene_dirs))
     return train_scene_dirs, val_scene_dirs
 
-def get_train_val_patch_ids_from_scene(sen12ms, train_season, train_scene_id, config):
-    '''
-    Input: sen12ms, train_season, train_scene_id, config
-    Output: train_patch_ids, val_patch_ids
-    '''
-    # get all patch IDs from this scene
-    patch_ids = sen12ms.get_patch_ids(train_season, train_scene_id)
-    # sample val_patches
-    num_val_patches = int(len(patch_ids) * config['training_params']['val_size'])
-    np.random.seed(config['experiment_params']['val_split_seed'])
-    val_patch_ids = np.random.choice(patch_ids, size=num_val_patches).tolist()
-    # get remaining train_patches
-    train_patch_ids = set(patch_ids) - set(val_patch_ids)
-    return train_patch_ids, val_patch_ids
-
-def get_train_val_s2_lc_from_scene_ids(sen12ms, train_season, train_scene_ids, config):
-    '''
-    Input: sen12ms, train_season, train_scene_ids, config
-    Output: train_s2, val_s2, train_lc, val_lc
-    '''
-    all_train_s2 = []
-    all_val_s2 = []
-    all_train_lc = []
-    all_val_lc = []
-    # get patches from each scene
-    for scene in train_scene_ids:
-        # compute train-val split
-        train_patch_ids, val_patch_ids = get_train_val_patch_ids_from_scene(sen12ms, \
-            train_season, scene, config)
-        # train data
-        train_s1, train_s2, train_lc, train_bounds = sen12ms.get_triplets(train_season, \
-            scene_ids=scene, patch_ids=train_patch_ids, s2_bands=config['s2_input_bands'])
-        # val data
-        val_s1, val_s2, val_lc, val_bounds = sen12ms.get_triplets(train_season, \
-            scene_ids=scene, patch_ids=val_patch_ids, s2_bands=config['s2_input_bands'])
-        # append data
-        all_train_s2.append(train_s2)
-        all_val_s2.append(val_s2)
-        all_train_lc.append(train_lc)
-        all_val_lc.append(val_lc)
-    # get final numpy arrays
-    all_train_s2 = np.concatenate(all_train_s2, axis=0)
-    all_val_s2 = np.concatenate(all_val_s2, axis=0)
-    all_train_lc = np.concatenate(all_train_lc, axis=0)
-    all_val_lc = np.concatenate(all_val_lc, axis=0)
-    return all_train_s2, all_val_s2, all_train_lc, all_val_lc
-
 def get_model_history_filepath(train_season, train_scene_ids, config):
     '''
     Inputs: train_season, train_scene_ids, config dict
@@ -279,62 +245,6 @@ def get_model_history_filepath(train_season, train_scene_ids, config):
     model_filepath = os.path.join(config['model_save_dir'], model_name)
     history_filepath = model_filepath.split('.h5')[0] + '_history.json'
     return model_filepath, history_filepath
-
-def train_resnet_on_scene_ids_for_season(sen12ms, train_season, train_scene_ids, config):
-    '''
-    Inputs: sen12ms, train_season (enum or list of enums),
-        train_scene_ids (int or list of ints), config
-    Output: trained keras model (and a model dump, saved to disk)
-    '''
-    print("--- Training ResNet model ---")
-    print("Season: {}, scene(s): {}".format(train_season, train_scene_ids))
-    # convert scene_ids to lists
-    if not isinstance(train_scene_ids, list):
-        train_scene_ids = [train_scene_ids]
-    # get sen12ms data. shape: D, B, W, H (D = # patches, B = # bands)
-    print("Loading sen12ms data...")
-    train_s2, val_s2, train_lc, val_lc = \
-        get_train_val_s2_lc_from_scene_ids(sen12ms, train_season, train_scene_ids, config)
-    # print array sizes
-    print("train_s2 size (bytes): {}".format(sys.getsizeof(train_s2)))
-    print("val_s2 size (bytes): {}".format(sys.getsizeof(val_s2)))
-    print("train_lc size (bytes): {}".format(sys.getsizeof(train_lc)))
-    print("val_lc size (bytes): {}".format(sys.getsizeof(val_lc)))
-    # preprocessing
-    print("Preprocessing s2, lc patches...")
-    label_encoder = land_cover_utils.get_label_encoder(config)
-    X_train, y_train = preprocess_s2_lc_for_classification(train_s2, train_lc, config, label_encoder)
-    X_val, y_val = preprocess_s2_lc_for_classification(val_s2, val_lc, config, label_encoder)
-    print("X_train shape: ", X_train.shape)
-    print("X_val shape: ", X_val.shape)
-    print("y_train shape: ", y_train.shape)
-    print("y_val shape: ", y_val.shape)
-    # print classes represented in train, val sets
-    train_represented_classes = land_cover_utils.get_represented_landuse_classes_from_onehot_labels(
-        y_train, label_encoder)
-    val_represented_classes = land_cover_utils.get_represented_landuse_classes_from_onehot_labels(
-        y_train, label_encoder)
-    print("y_train represented classes: ", train_represented_classes)
-    print("y_val represented classes: ", val_represented_classes)
-    # get compiled model
-    model = get_compiled_resnet(config, label_encoder)
-    model_filepath, history_filepath = get_model_history_filepath(train_season, train_scene_ids, config)
-    # train keras model
-    callbacks = get_callbacks(model_filepath, config)
-    print("Training keras model...")
-    history = model.fit(X_train, y_train,
-              batch_size=config['resnet_params']['batch_size'],
-              epochs=config['training_params']['max_epochs'],
-              validation_data=(X_val, y_val),
-              shuffle=True,
-              callbacks=callbacks)
-    history = land_cover_utils.make_history_json_serializable(history.history)
-    print("Done training!")
-    # save model history
-    with open(history_filepath, 'w') as f:
-        json.dump(history, f, indent=4)
-    print("Model history saved to: ", history_filepath)
-    return model, history
 
 def train_resnet_on_scene_dirs(scene_dirs, weights_path, config, \
     predict_continents=False, predict_seasons=False):
@@ -365,9 +275,9 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config, \
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
     train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config, \
-        predict_continents, predict_seasons)
+        return_labels=True)
     val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config, \
-        predict_continents, predict_seasons)
+        return_labels=True)
     # fit keras model
     print("Training keras model...")
     history = None
@@ -447,6 +357,117 @@ def train_resnet_on_season(season, config):
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
+def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config):
+    '''
+    Use FC-DenseNet model to predict on a single scene_dir
+    Store predictions in .npz file (1 file per scene)
+    '''
+    if os.path.exists(save_dir):
+        print('save_dir {} already exists! skipping prediction'.format(save_dir))
+        return
+    print('generating predictions to {}...'.format(save_dir))
+    # prep datagen
+    patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dir(scene_dir)
+    patch_ids = [int(path.split('patch_')[-1]) for path in patch_paths]
+    predict_datagen = datagen.SegmentationDataGenerator(patch_paths, config, return_labels=False)
+    # predict
+    predictions = model.predict_generator(predict_datagen)
+    # post-process predictions
+    predictions = np.argmax(predictions, axis=-1) # output shape: (N, W, H)
+    predictions = label_encoder.inverse_transform(predictions.flatten()).reshape(predictions.shape)
+    predictions = predictions.astype('uint8')
+    # save to .npz files, indexed by patch_id (each file = predictions on 1 patch)
+    os.makedirs(save_dir)
+    for patch_id, pred in zip(patch_ids, predictions):
+        path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_id))
+        np.savez_compressed(path, pred)
+    print('saved fc-densenet predictions to {}'.format(save_dir))
+    return predictions
+
+def save_resnet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config):
+    '''
+    Use ResNet model to predict on a single scene_dir
+    Store predictions in .npz files (1 file per scene)
+    '''
+    # prep datagen
+    print('generating predictions to {}...'.format(save_dir))
+    subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dir(scene_dir)
+    patch_ids = [int(path.split('/patch_')[-1].split('/')[0]) for path in subpatch_paths]
+    predict_datagen = datagen.SubpatchDataGenerator(subpatch_paths, config, return_labels=False)
+    # predict
+    predictions = model.predict_generator(predict_datagen)
+    # post-process predictions
+    predictions = np.argmax(predictions, axis=-1)
+    predictions = predictions.astype('uint8')
+    # save to .npz, indexed by patch_id (each file = predictions on subpatches from 1 patch)
+    if os.path.exists(save_dir):
+        print('save_dir {} already exists! skipping prediction'.format(save_dir))
+        return
+    else:
+        os.makedirs(save_dir)
+    subpatches_per_patch = config['training_params']['patch_size'] // config['training_params']['subpatch_size']
+    for i in range(0, len(patch_ids), subpatches_per_patch):
+        assert len(set(patch_ids[i:i+subpatches_per_patch])) == 1 # all subpatches from 1 patch
+        path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_ids[i]))
+        np.savez_compressed(path, predictions[i:i+subpatches_per_patch])
+    print('saved resnet predictions to {}'.format(save_dir))
+    return predictions
+
+def predict_model_path_on_each_scene(model_path, label_encoder, config):
+    '''
+    Given a weights_path,
+    Save predictions on each scene
+    '''
+    # load model from model_path
+    if 'weights' in model_path and 'resnet' in model_path:
+        model = get_compiled_resnet(config, label_encoder)
+        model.load_weights(model_path)
+        mode = 'subpatches'
+    elif 'weights' in model_path and 'DenseNet' in model_path:
+        model = get_compiled_fc_densenet(config, label_encoder)
+        model.load_weights(model_path)
+        mode = 'segmentation'
+    else:
+        print('ERROR: unable to load weights file!')
+        return
+    model_name = os.path.basename(model_path).split('_weights.h5')[0]
+    folder = 'by_continent' if 'continent' in model_name else 'by_season'
+    # predict on each scene
+    for continent in config['all_continents']:
+        for season in config['all_seasons']:
+            # get all scenes from this continent-season
+            scene_dirs = land_cover_utils.get_scene_dirs_for_continent_season(continent, season, config, mode)
+            if mode == 'subpatches':
+                # predict in subpatch/classification mode
+                for scene_dir in scene_dirs:
+                    scene_name = scene_dir.split('/')[-1]
+                    save_dir = os.path.join(config['subpatches_predictions_dir'],
+                        folder, model_name, '{}-{}'.format(continent, season), scene_name)
+                    save_resnet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config)
+            else:
+                # predict in segmentation mode
+                for scene_dir in scene_dirs:
+                    scene_name = scene_dir.split('/')[-1]
+                    save_dir = os.path.join(config['segmentation_predictions_dir'],
+                        folder, model_name, '{}-{}'.format(continent, season), scene_name)
+                    save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config)
+    print('finished predictions using model_path: ', model_path)
+    print()
+
+def predict_saved_models_on_each_scene(config):
+    '''
+    Load all saved models
+    Save predictions on each scene
+    '''
+    # get all saved models
+    model_filepaths = glob.glob(os.path.join(config['model_save_dir'], '**/*.h5'))
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    # evaluate each saved model on each seasons/scene
+    for model_path in model_filepaths:
+        print('Predicting using model path: ', model_path)
+        predict_model_path_on_each_scene(model_path, label_encoder, config)
+    return
+    
 def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     model=None, model_path=None, \
     test_season=None, test_scene_id=None):
@@ -455,6 +476,7 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     Output: classification report for this scene
     '''
     assert model is not None or model_path is not None
+    # load model from model_path, if necessary
     if model is None:
         if 'weights' in model_path and 'resnet' in model_path:
             model = get_compiled_resnet(config, label_encoder)
@@ -467,14 +489,16 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     # load data
     s1, s2, lc, bounds = sen12ms.get_triplets(test_season, test_scene_id, \
         s2_bands=config['s2_input_bands'])
+    patch_ids = sen12ms.get_patch_ids(test_season, test_scene_id)
     # preprocessing: get subpatches, majority landuse class, etc.
     if (model is not None and 'densenet' in model.name) or \
             (model_path is not None and 'DenseNet' in model_path):
-        X_test, y_test = preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder)
+        X_test, y_test, patch_ids = preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder, patch_ids)
     else:
-        X_test, y_test = preprocess_s2_lc_for_classification(s2, lc, config, label_encoder)
+        X_test, y_test, patch_ids = preprocess_s2_lc_for_classification(s2, lc, config, label_encoder, patch_ids)
     # run evaluation
     results = model.evaluate(X_test, y_test, verbose=1)
+    predictions = model.predict(X_test)
     return results
 
 def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
@@ -516,27 +540,6 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
             with open(results_path, 'w') as f:
                 json.dump(all_results, f, indent=4)
     return all_results
-
-def train_single_scene_models_for_each_season(config):
-    '''
-    Inputs: config (dict)
-    Output: saved Keras models (on disk)
-    '''
-    sen12ms = SEN12MSDataset(config['dataset_dir'])
-    for season in ALL_SEASONS:
-        # sample N scenes from this season
-        scene_ids = list(sen12ms.get_scene_ids(season))
-        np.random.seed(config['experiment_params']['train_scene_sampling_seed'])
-        sampled_scenes = np.random.choice(scene_ids, \
-            size=int(config['experiment_params']['num_models_per_season']))
-        # train and save keras models for each sampled scene
-        for scene in sampled_scenes:
-            # check if we have already trained a model for this scene
-            model_filepath, history_filepath = get_model_history_filepath(season, scene, config)
-            if os.path.exists(model_filepath) and os.path.exists(history_filepath):
-                print("{} exists! Skipping model training".format(history_filepath))
-                continue
-            train_resnet_on_scene_ids_for_season(sen12ms, season, scene, config)
 
 def evaluate_saved_models_on_each_season(config):
     '''
@@ -612,9 +615,9 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
     train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config, \
-        predict_continents, predict_seasons)
+        return_labels=True)
     val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config, \
-        predict_continents, predict_seasons)
+        return_labels = True)
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -729,15 +732,18 @@ def main(args):
     # train new models on all seasons/continents
     if args.train:
         # train resnet models
-        # for continent in config['all_continents']:
-        #     train_resnet_on_continent(continent, config)
-        # for season in config['all_seasons']:
-        #     train_resnet_on_season(season, config)
+        for continent in config['all_continents']:
+            train_resnet_on_continent(continent, config)
+        for season in config['all_seasons']:
+            train_resnet_on_season(season, config)
         # train densenet models
         for continent in config['all_continents']:
             train_fc_densenet_on_continent(continent, config)
         for season in config['all_seasons']:
             train_fc_densenet_on_season(season, config)
+    # save each model's predictions on each scene
+    if args.predict:
+        predict_saved_models_on_each_scene(config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)
@@ -747,6 +753,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--config', dest='config_path', help='config JSON path')
     parser.add_argument('--train', dest='train', action='store_true', help='train new models')
     parser.add_argument('--test', dest='test', action='store_true', help='test saved models')
+    parser.add_argument('--predict', dest='predict', action='store_true', help='predict using saved models')
     parser.add_argument('--model_summary', dest='model_summary', action='store_true', help='print model summaries')
     args = parser.parse_args()
     main(args)

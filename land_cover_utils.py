@@ -80,7 +80,7 @@ def patch_to_subpatches(patch, config):
     subpatches = np.concatenate(subpatches, axis=0)
     return subpatches
 
-def scene_to_subpatches(patches, config):
+def scene_to_subpatches(patches, config, patch_ids=None):
     '''
     Split square patches into smaller squre sub-patches
     Input: patches of shape D, B, W, H
@@ -89,11 +89,18 @@ def scene_to_subpatches(patches, config):
     '''
     subpatch_size = config['training_params']['subpatch_size']
     all_subpatches = [] # list of each patch's subpatch array
+    all_patch_ids = []
     for i, patch in enumerate(patches):
         subpatches = patch_to_subpatches(patch, config)
         all_subpatches.append(subpatches)
+        if patch_ids is not None:
+            all_patch_ids.extend([patch_ids[i]] * len(subpatches))
     # concat all subpatches
-    return np.concatenate(all_subpatches, axis=0)
+    all_subpatches = np.concatenate(all_subpatches, axis=0)
+    if patch_ids is not None:
+        return all_subpatches, patch_ids
+    else:
+        return all_subpatches
 
 def combine_landuse_classes(landuse, config):
     '''
@@ -179,6 +186,27 @@ def get_scene_dirs_for_season(season, config, mode='subpatches'):
         all_scene_dirs += scene_dirs
     return all_scene_dirs
 
+def get_scene_dirs_for_continent_season(continent, season, config, mode='subpatches'):
+    '''
+    Input: continent (e.g. Africa), season (e.g. fall), config
+    Output: list of scene directories for that continent-season
+    '''
+    # get directories for this season
+    dataset_dir = config['subpatches_dataset_dir'] if mode == 'subpatches' \
+        else config['segmentation_dataset_dir']
+    continent_season_subdirs = [entry.path \
+        for entry in os.scandir(dataset_dir) \
+        if entry.is_dir() and \
+        continent in entry.name and \
+        season in entry.name]
+    # traverse 1 level down to get scene directories
+    all_scene_dirs = []
+    for continent_season_subdir in continent_season_subdirs:
+        scene_dirs = [entry.path for entry in os.scandir(continent_season_subdir) \
+            if entry.is_dir() and 'scene' in entry.name]
+        all_scene_dirs += scene_dirs
+    return all_scene_dirs
+
 def get_segmentation_patch_paths_for_scene_dir(scene_dir):
     '''
     Input: single scene_dir
@@ -213,6 +241,7 @@ def get_subpatch_paths_for_scene_dir(scene_dir):
         # get subpatch files
         subpatch_npy_paths = [entry.path for entry in os.scandir(patch_dir) \
             if entry.is_file() and 'subpatch' in entry.name and entry.name.endswith('.npy')]
+        # TODO: numeric sort by subpatch_id?
         all_subpatch_paths += subpatch_npy_paths
     return all_subpatch_paths
 
