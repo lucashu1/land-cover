@@ -23,6 +23,19 @@
         "swir1", "swir2"
     ],
     "s2_max_val": 28004,
+    "dfc_class_descriptions": {
+        "1": "Forest",
+        "2": "Shrubland",
+        "3": "Savanna",
+        "4": "Grasslands",
+        "5": "Wetlands",
+        "6": "Croplands",
+        "7": "Urban/Built-Up",
+        "8": "Snow/Ice",
+        "9": "Barren",
+        "10": "Water"
+    },
+    "dfc_unknown_classes": [30],
     "landuse_class_descriptions": {
         "1": "Barren",
         "2": "Permanent Snow and Ice",
@@ -53,12 +66,14 @@
         "gpu_id":"1",
         "patch_size":256,
         "subpatch_size": 64,
-        "val_size": 0.20,
+        "val_size": 0.05,
         "max_epochs": 200,
         "early_stopping_patience": 2,
         "do_color_aug": false,
-        "use_multiprocessing": true,
-        "workers": 4,
+        "use_multiprocessing": false,
+        "workers": 1,
+        "num_scenes_in_mem": 8,
+        "label_smoothing": 0.1,
         "geospatial_loss_weight": 1
     },
     "lr_reducer_params": {

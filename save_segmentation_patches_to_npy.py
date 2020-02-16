@@ -20,7 +20,10 @@ from sen12ms_dataLoader import SEN12MSDataset, \
 
 ALL_SEASONS = [season.value for season in Seasons if season != Seasons.ALL]
 
-def get_s2_landuse_save_path(config, continent, season, scene, patch):
+# Remapping IGBP classes to simplified DFC classes
+IGBP2DFC = np.array([0, 1, 1, 1, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 6, 8, 9, 10])
+
+def get_s2_landuse_dfc_save_path(config, continent, season, scene, patch):
     '''
     Input: config, continent, season, scene, patch
     Output: s2_save_path, landuse_save_path
@@ -36,7 +39,8 @@ def get_s2_landuse_save_path(config, continent, season, scene, patch):
         )
     s2_save_path = os.path.join(save_dir, "s2.npy")
     landuse_save_path = os.path.join(save_dir, "landuse.npy")
-    return s2_save_path, landuse_save_path
+    dfc_save_path = os.path.join(save_dir, "dfc.npy")
+    return s2_save_path, landuse_save_path, dfc_save_path
 
 def main(args):
     '''
@@ -63,22 +67,25 @@ def main(args):
                     patch, s2_bands=config['s2_input_bands'])
                 # move bands to last axis
                 s2, lc = np.moveaxis(s2, 0, -1), np.moveaxis(lc, 0, -1)
-                landuse_labels = lc[:, :, LCBands.landuse.value-1]
+                landuse_labels = lc[:, :, LCBands.landuse.value-1].astype('uint8')
                 landuse_labels = combine_landuse_classes(landuse_labels, config)
+                igbp = lc[:, :, 0].astype('uint8') # IGBP
+                dfc = IGBP2DFC[igbp].astype('uint8') # simplified IGBP
                 # update S2 band max vals
                 s2_band_max_in_patch = np.amax(s2, axis=(0,1))
                 s2_band_max = np.amax(np.vstack([s2_band_max, s2_band_max_in_patch]), axis=0)
                 # get save paths
-                s2_path, landuse_path = get_s2_landuse_save_path(config, \
+                s2_path, landuse_path, dfc_path = get_s2_landuse_dfc_save_path(config, \
                     continent, season, scene, patch)
                 # make directories, if necessary
                 if not os.path.exists(os.path.dirname(s2_path)):
                     os.makedirs(os.path.dirname(s2_path))
                 # numpy dump
-                np.save(s2_path, s2)
-                np.save(landuse_path, landuse_labels)
+                # np.save(s2_path, s2)
+                # np.save(landuse_path, landuse_labels)
+                np.save(dfc_path, dfc)
                 # garbage collection
-                del s1, s2, lc, bounds
+                del s1, s2, lc, dfc, bounds
             print("S2 input bands: ", config['s2_input_bands'])
             print("S2 band max vals (so far): ", s2_band_max)
 

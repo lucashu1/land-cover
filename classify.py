@@ -369,7 +369,7 @@ def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_
     # prep datagen
     patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dir(scene_dir)
     patch_ids = [int(path.split('patch_')[-1]) for path in patch_paths]
-    predict_datagen = datagen.SegmentationDataGenerator(patch_paths, config, return_labels=False)
+    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, return_labels=False)
     # predict
     predictions = model.predict_generator(predict_datagen)
     # post-process predictions
@@ -596,6 +596,8 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     # get train, val scene dirs
     print("Performing train/val split...")
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
+    train_scene_paths = [scene + '.npz' for scene in train_scene_dirs]
+    val_scene_paths = [scene + '.npz' for scene in val_scene_dirs]
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
     # save train-val-split
@@ -603,7 +605,9 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     with open(train_split_filepath, 'w') as f:
         train_split = {
             'train_scene_dirs': train_scene_dirs,
-            'val_scene_dirs': val_scene_dirs
+            'val_scene_dirs': val_scene_dirs,
+            'train_scene_paths': train_scene_paths,
+            'val_scene_paths': val_scene_paths
         }
         json.dump(train_split, f, indent=4)
     # get patch_paths
@@ -611,13 +615,13 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_fc_densenet(config, label_encoder, predict_continents, predict_seasons)
+    model = get_compiled_fc_densenet(config, label_encoder)
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
-    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config, \
-        return_labels=True)
-    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config, \
-        return_labels = True)
+    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, labels='dfc', label_smoothing=config['training_params']['label_smoothing'])
+    val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config, labels='dfc')
+    # train_datagen = datagen.SegmentationDataGenerator(train_scene_paths, config, labels='dfc')
+    # val_datagen = datagen.SegmentationDataGenerator(val_scene_paths, config, labels='dfc')
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -698,6 +702,30 @@ def train_fc_densenet_on_continent(continent, config, predict_continents=False, 
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
+def train_fc_densenet_on_all_scenes(config):
+    '''
+    Input: config
+    Output: trained DenseNet model (saved to disk), training history
+    '''
+    print("--- Training FC-DenseNet model on all scenes ---")
+    # get filepaths
+    filename = 'sen12ms_all-scenes_label-smoothing-{}_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
+    weights_path = os.path.join(
+        config['model_save_dir'],
+        filename)
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
+        return
+    # train model
+    scene_dirs = []
+    for season in config['all_seasons']:
+        scene_dirs.extend(land_cover_utils.get_scene_dirs_for_season(season, config))
+    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    return model, history
+
 def main(args):
     '''
     Main function: train new models, or test existing models on SEN12MS seasons/scenes
@@ -731,16 +759,17 @@ def main(args):
         print()
     # train new models on all seasons/continents
     if args.train:
-        # train resnet models
-        for continent in config['all_continents']:
-            train_resnet_on_continent(continent, config)
-        for season in config['all_seasons']:
-            train_resnet_on_season(season, config)
-        # train densenet models
-        for continent in config['all_continents']:
-            train_fc_densenet_on_continent(continent, config)
-        for season in config['all_seasons']:
-            train_fc_densenet_on_season(season, config)
+        # # train resnet models
+        # for continent in config['all_continents']:
+        #     train_resnet_on_continent(continent, config)
+        # for season in config['all_seasons']:
+        #     train_resnet_on_season(season, config)
+        # # train densenet models
+        # for continent in config['all_continents']:
+        #     train_fc_densenet_on_continent(continent, config)
+        # for season in config['all_seasons']:
+        #     train_fc_densenet_on_season(season, config)
+        train_fc_densenet_on_all_scenes(config)
     # save each model's predictions on each scene
     if args.predict:
         predict_saved_models_on_each_scene(config)

@@ -32,15 +32,21 @@ def make_history_json_serializable(history):
             new_history[k] = [float(x) for x in v]
     return new_history
 
-def get_label_encoder(config):
+def get_label_encoder(config, labels='dfc'):
     '''
     Uses config_dict's landuse_class info to get an sklearn label_encoder
     Output: sklearn label_encoder
     '''
     # get remaining classes after merging
-    merged_classes = set(config['landuse_class_mappings'].keys())
-    all_classes = set(config['landuse_class_descriptions'].keys())
-    remaining_classes = all_classes - merged_classes
+    if labels == 'landuse':
+        merged_classes = set(config['landuse_class_mappings'].keys())
+        all_classes = set(config['landuse_class_descriptions'].keys())
+        remaining_classes = all_classes - merged_classes
+    elif labels == 'dfc':
+        remaining_classes = config['dfc_class_descriptions'].keys()
+    else:
+        print('get_label_encoder: unknown labels parameter!')
+        return None
     # sort class_nums
     class_nums_sorted = sorted(list(remaining_classes))
     # get label_encoder
@@ -146,7 +152,7 @@ def get_missing_landuse_classes_from_onehot_labels(y, label_encoder):
     missing_classes = all_classes - represented_classes
     return list(missing_classes)
 
-def get_scene_dirs_for_continent(continent, config, mode='subpatches'):
+def get_scene_dirs_for_continent(continent, config, mode='segmentation'):
     '''
     Input: continent (e.g. North_America), config
     Output: list of scene directories for that continent
@@ -166,7 +172,7 @@ def get_scene_dirs_for_continent(continent, config, mode='subpatches'):
         all_scene_dirs += scene_dirs
     return all_scene_dirs
 
-def get_scene_dirs_for_season(season, config, mode='subpatches'):
+def get_scene_dirs_for_season(season, config, mode='segmentation'):
     '''
     Input: season (e.g. fall), config
     Output: list of scene directories for that continent
@@ -186,7 +192,7 @@ def get_scene_dirs_for_season(season, config, mode='subpatches'):
         all_scene_dirs += scene_dirs
     return all_scene_dirs
 
-def get_scene_dirs_for_continent_season(continent, season, config, mode='subpatches'):
+def get_scene_dirs_for_continent_season(continent, season, config, mode='segmentation'):
     '''
     Input: continent (e.g. Africa), season (e.g. fall), config
     Output: list of scene directories for that continent-season
