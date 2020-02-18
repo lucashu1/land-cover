@@ -3,8 +3,10 @@
     "dataset_dir": "/data/datasets/sen12ms",
     "subpatches_dataset_dir":"/data/datasets/sen12ms_subpatches",
     "segmentation_dataset_dir":"/data/datasets/sen12ms_segmentation",
+    "validation_dataset_dir":"/data/datasets/sen12ms_segmentation/ROIs0000_validation",
     "subpatches_predictions_dir":"/data/lucas/sen12ms_subpatches_predictions",
     "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
+    "competition_predictions_dir":"/data/lucas/sen12ms_competition_predictions",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/continents.json",
@@ -16,6 +18,8 @@
     "all_seasons": [
         "spring", "summer", "fall", "winter"
     ],
+    "s1_input_bands": ["VV", "VH"],
+    "s1_max_val": 28004,
     "s2_input_bands": [
         "blue", "green", "red",
         "re1", "re2", "re3",
@@ -35,7 +39,7 @@
         "9": "Barren",
         "10": "Water"
     },
-    "dfc_unknown_classes": [30],
+    "dfc_removed_classes": [3, 8],
     "landuse_class_descriptions": {
         "1": "Barren",
         "2": "Permanent Snow and Ice",
@@ -54,7 +58,7 @@
         "36": 30,
         "35": 30
     },
-    "landuse_unknown_classes": [0, 15, 16, 23, 37],
+    "landuse_removed_classes": [0, 15, 16, 23, 37],
     "experiment_params": {
         "num_models_per_season": 5,
         "train_scene_sampling_seed": 0,
@@ -74,6 +78,7 @@
         "workers": 1,
         "num_scenes_in_mem": 8,
         "label_smoothing": 0.1,
+        "class_weight": "balanced",
         "geospatial_loss_weight": 1
     },
     "lr_reducer_params": {

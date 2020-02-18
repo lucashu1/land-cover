@@ -16,11 +16,13 @@ import json
 from collections import defaultdict
 import numpy as np
 from scipy import stats
+import imageio
 import tensorflow as tf
 import keras
 from keras.layers import Dense, Flatten
 from keras.models import Model, load_model
 from keras.optimizers import Adam, Nadam
+from keras.losses import categorical_crossentropy
 from keras.callbacks import ModelCheckpoint, \
     LearningRateScheduler, ReduceLROnPlateau, \
     EarlyStopping
@@ -157,7 +159,8 @@ def get_compiled_resnet(config, label_encoder, \
         return full_model
 
 def get_compiled_fc_densenet(config, label_encoder, \
-    predict_continents=False, predict_seasons=False):
+    predict_continents=False, predict_seasons=False, \
+    loss='categorical_crossentropy'):
     '''
     Input: config_dict, label_encoder
     Output: compiled FC-DenseNet model
@@ -171,7 +174,7 @@ def get_compiled_fc_densenet(config, label_encoder, \
         nb_dense_block=config['fc_densenet_params']['nb_dense_block'], \
         activation='softmax')
     if not predict_continents and not predict_seasons:
-        model.compile(loss='categorical_crossentropy',
+        model.compile(loss=loss,
             optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
             metrics=['accuracy'])
         return model
@@ -357,7 +360,7 @@ def train_resnet_on_season(season, config):
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
-def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config):
+def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
     '''
     Use FC-DenseNet model to predict on a single scene_dir
     Store predictions in .npz file (1 file per scene)
@@ -369,7 +372,7 @@ def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_
     # prep datagen
     patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dir(scene_dir)
     patch_ids = [int(path.split('patch_')[-1]) for path in patch_paths]
-    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, return_labels=False)
+    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, labels=None)
     # predict
     predictions = model.predict_generator(predict_datagen)
     # post-process predictions
@@ -379,8 +382,12 @@ def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_
     # save to .npz files, indexed by patch_id (each file = predictions on 1 patch)
     os.makedirs(save_dir)
     for patch_id, pred in zip(patch_ids, predictions):
-        path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_id))
-        np.savez_compressed(path, pred)
+        if competition_mode:
+            path = os.path.join(save_dir, 'ROIs0000_validation_dfc_0_p{}.tif'.format(patch_id))
+            imageio.imwrite(path, pred)
+        else:
+            path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_id))
+            np.savez_compressed(path, pred)
     print('saved fc-densenet predictions to {}'.format(save_dir))
     return predictions
 
@@ -468,6 +475,27 @@ def predict_saved_models_on_each_scene(config):
         predict_model_path_on_each_scene(model_path, label_encoder, config)
     return
     
+def predict_model_path_on_validation_set(model_path, label_encoder, config):
+    '''
+    Given a weights_path for an FC-DenseNet model,
+    Save predictions on each scene in the Validation set
+    '''
+    model = get_compiled_fc_densenet(config, label_encoder)
+    model.load_weights(model_path)
+    model_name = os.path.basename(model_path).split('_weights.h5')[0]
+    val_season = 'ROIs0000_validation'
+    # get all scenes from validation set
+    scene_dirs = os.listdir(config['validation_dataset_dir'])
+    scene_dirs = [os.path.join(config['validation_dataset_dir'], scene) for scene in scene_dirs]
+    # predict in segmentation mode
+    for scene_dir in scene_dirs:
+        scene_name = scene_dir.split('/')[-1]
+        save_dir = os.path.join(config['competition_predictions_dir'],
+            model_name, val_season, scene_name)
+        save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=True)
+    print('finished predictions using model_path: ', model_path)
+    print()
+
 def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     model=None, model_path=None, \
     test_season=None, test_scene_id=None):
@@ -613,15 +641,39 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     # get patch_paths
     train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
-    # get compiled keras model
-    label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_fc_densenet(config, label_encoder)
     # set up callbacks, data generators
     callbacks = get_callbacks(weights_path, config)
-    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, labels='dfc', label_smoothing=config['training_params']['label_smoothing'])
+    save_label_counts =  config['training_params']['class_weight'] == 'balanced'
+    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, labels='dfc', \
+            label_smoothing=config['training_params']['label_smoothing'], save_label_counts=save_label_counts)
     val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config, labels='dfc')
     # train_datagen = datagen.SegmentationDataGenerator(train_scene_paths, config, labels='dfc')
     # val_datagen = datagen.SegmentationDataGenerator(val_scene_paths, config, labels='dfc')
+    if config['training_params']['class_weight'] == 'balanced':
+        class_weights = train_datagen.get_class_weights_balanced()
+        def balanced_loss(onehot_labels, probs):
+            """
+            scale loss based on class weights
+            https://github.com/keras-team/keras/issues/3653#issuecomment-344068439
+            """
+            # computer weights based on onehot labels
+            weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
+            # compute (unweighted) cross entropy loss
+            unweighted_losses = categorical_crossentropy(onehot_labels, probs)
+            # apply the weights, relying on broadcasting of the multiplication
+            weighted_losses = unweighted_losses * weights
+            # reduce the result to get your final loss
+            loss = tf.reduce_mean(weighted_losses)
+            return loss
+        loss = balanced_loss
+        print('training with balanced loss...')
+    else:
+        class_weights = None
+        loss = 'categorical_crossentropy'
+        print('training with unbalanced loss...')
+    # get compiled keras model
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    model = get_compiled_fc_densenet(config, label_encoder, loss=loss)
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -709,7 +761,7 @@ def train_fc_densenet_on_all_scenes(config):
     '''
     print("--- Training FC-DenseNet model on all scenes ---")
     # get filepaths
-    filename = 'sen12ms_all-scenes_label-smoothing-{}_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
+    filename = 'sen12ms_all-scenes_label-smoothing-{}_balanced_8-classes_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
     weights_path = os.path.join(
         config['model_save_dir'],
         filename)
@@ -772,7 +824,11 @@ def main(args):
         train_fc_densenet_on_all_scenes(config)
     # save each model's predictions on each scene
     if args.predict:
-        predict_saved_models_on_each_scene(config)
+        # predict_saved_models_on_each_scene(config)
+        # competition_model_path = os.path.join(config['model_save_dir'], 'sen12ms_all-scenes_FC-DenseNet_weights.h5')
+        competition_model_path = os.path.join(config['model_save_dir'], 'sen12ms_all-scenes_label-smoothing-0.1_FC-DenseNet_weights.h5')
+        label_encoder = land_cover_utils.get_label_encoder(config)
+        predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)
