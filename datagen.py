@@ -77,7 +77,7 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         for c, count in enumerate(label_counts):
             print('{}: {}% ({} instances)'.format(
                 self.label_encoder.classes_[c], 
-                100*num_samples/count, 
+                100*count/num_samples, 
                 count))
         return label_counts
 
@@ -100,15 +100,18 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
 
     def __getitem__(self, index):
         'Generate one batch of data'
-        indices = self.indices[index*self.batch_size:(index+1)*self.batch_size]
-        batch_paths = [self.patch_paths[i] for i in indices]
 
         x_batch = []
         y_batch = []
-        continents_batch = []
-        seasons_batch = []
-        
-        for i, patch_path in enumerate(batch_paths):
+
+        # out of patches --> call on_epoch_end to re-shuffle
+        if len(self.patch_paths) - self.patch_index < self.batch_size:
+            self.on_epoch_end()
+
+        while len(x_batch) < self.batch_size and self.patch_index < len(self.patch_paths):
+            patch_path = self.patch_paths[self.patch_index]
+            self.patch_index += 1
+
             # get S1
             # s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
             # s1 = s2.squeeze()
@@ -161,18 +164,20 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
 
         # one-hot encode labels
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
+
         # apply label smoothing: https://www.pyimagesearch.com/2019/12/30/label-smoothing-with-keras-tensorflow-and-deep-learning/
         if self.label_smoothing is not None and self.label_smoothing > 0:
            y_batch *= (1.0-self.label_smoothing)
            y_batch += (self.label_smoothing / y_batch.shape[-1])
+
         assert x_batch.shape[0] == y_batch.shape[0]
         return x_batch.copy(), y_batch.copy()
 
     def on_epoch_end(self):
-        'Shuffle indices'
-        self.indices = np.arange(len(self.patch_paths))
+        ''' Shuffle patches '''
+        self.patch_index = 0
         if self.labels is not None:
-            np.random.shuffle(self.indices)
+            np.random.shuffle(self.patch_paths)
 
 class SubpatchDataGenerator(keras.utils.Sequence):
     'Generates subpatch batch data for Keras'
