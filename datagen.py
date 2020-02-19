@@ -39,19 +39,19 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         # assert self.steps_per_epoch * batch_size < len(patch_paths)
 
         self.input_size = config['training_params']['patch_size']
-        self.num_channels = len(config['s2_input_bands'])
+        self.num_channels = len(config['s2_input_bands']) + len(config['s1_input_bands'])
 
         if labels is not None:
             self.label_encoder = get_label_encoder(config, labels=labels)
             self.num_classes = len(self.label_encoder.classes_)
             self.removed_classes = config['{}_removed_classes'.format(labels)]
+            self.ignored_classes = config['{}_ignored_classes'.format(labels)]
             self.label_smoothing = label_smoothing
             if save_label_counts:
                 self.label_counts = None
                 self.label_counts = self.get_label_counts()
 
-        self.max_s1_val = config['s1_max_val']
-        self.max_s2_val = config['s2_max_val']
+        self.config = config
         self.do_color_aug = config['training_params']['do_color_aug']
 
         self.on_epoch_end()
@@ -113,13 +113,15 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
             self.patch_index += 1
 
             # get S1
-            # s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
-            # s1 = s2.squeeze()
-            # s1 /= self.max_s1_val
+            s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
+            s1 = s1.squeeze()
+            if np.any(np.isnan(s1)):
+                continue
+            s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
             # get S2
             s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
             s2 = s2.squeeze()
-            s2 /= self.max_s2_val
+            s2 = (s2 - self.config['s2_band_means']) / self.config['s2_band_std']
             # get labels
             if self.labels is not None:
                 labels = np.load(os.path.join(patch_path, "{}.npy".format(self.labels)))
@@ -128,24 +130,30 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
                 assert s2.shape[0] == labels.shape[0]
 
             # check dimensions
-            # assert s1.shape[0] == s1.shape[1]
-            # assert s1.shape[0] == self.input_size
+            assert s1.shape[0] == s1.shape[1]
+            assert s1.shape[0] == self.input_size
             assert s2.shape[0] == s2.shape[1]
             assert s2.shape[0] == self.input_size
 
-            if self.labels is not None:
+            if self.labels is not None and len(self.removed_classes) > 0:
                 # check for removed/ignored labels
-                num_removed_classes = np.sum([np.count_nonzero(labels==c) for c in self.removed_classes])
+                num_removed_classes = np.sum([np.count_nonzero(labels==c) \
+                    for c in self.removed_classes])
                 if num_removed_classes > 0:
                     continue
+
+            if self.labels is not None and len(self.ignored_classes) > 0:
+                # mask out ignored classes (use reserved '0' index)
+                for c in self.ignored_classes:
+                    labels[labels == c] = 0
 
             # setup x
             if self.do_color_aug:
                 x = color_aug(s2)
                 x_batch.append(color_aug(s2))
             else:
-                # x = np.concatenate((s1,s2), axis=-1)
-                x = s2
+                x = np.concatenate((s1,s2), axis=-1)
+                # x = s2
                 x_batch.append(x)
 
             if self.labels is not None:
@@ -161,6 +169,8 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         # convert x, y to numpy arrays
         x_batch = np.array(x_batch)
         y_batch = np.array(y_batch)
+        if len(self.ignored_classes) > 0:
+            y_batch_ignored = np.where(y_batch == 0)
 
         # one-hot encode labels
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
@@ -169,6 +179,11 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         if self.label_smoothing is not None and self.label_smoothing > 0:
            y_batch *= (1.0-self.label_smoothing)
            y_batch += (self.label_smoothing / y_batch.shape[-1])
+        # set ignored pixels = [1, 0, 0, ...]
+        if len(self.ignored_classes) > 0:
+            ignored_vec = np.zeros(self.num_classes)
+            ignored_vec[0] = 1.0
+            y_batch[y_batch_ignored] = ignored_vec
 
         assert x_batch.shape[0] == y_batch.shape[0]
         return x_batch.copy(), y_batch.copy()

@@ -1,5 +1,6 @@
 *.swp
 .ipynb_checkpoints/*
+jupyter_notebooks/.ipynb_checkpoint/*
 __pycache__/*
 retired_scripts/*
 saved_models/*

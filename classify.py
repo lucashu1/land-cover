@@ -168,7 +168,7 @@ def get_compiled_fc_densenet(config, label_encoder, \
     # init FC DenseNet
     num_classes = len(label_encoder.classes_)
     img_size = config['training_params']['patch_size']
-    input_shape=(img_size, img_size, len(config['s2_input_bands']))
+    input_shape=(img_size, img_size, len(config['s1_input_bands'])+len(config['s2_input_bands']))
     model = DenseNetFCN(input_shape, include_top=True, weights=None, \
         classes=num_classes, \
         nb_dense_block=config['fc_densenet_params']['nb_dense_block'], \
@@ -624,8 +624,6 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     # get train, val scene dirs
     print("Performing train/val split...")
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
-    train_scene_paths = [scene + '.npz' for scene in train_scene_dirs]
-    val_scene_paths = [scene + '.npz' for scene in val_scene_dirs]
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
     # save train-val-split
@@ -634,11 +632,11 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
         train_split = {
             'train_scene_dirs': train_scene_dirs,
             'val_scene_dirs': val_scene_dirs,
-            'train_scene_paths': train_scene_paths,
-            'val_scene_paths': val_scene_paths
         }
         json.dump(train_split, f, indent=4)
-    # get patch_paths
+    # get label_encoder, patch_paths
+    labels = config['training_params']['label_scheme']
+    label_encoder = land_cover_utils.get_label_encoder(config, labels=labels)
     train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
     # set up callbacks, data generators
@@ -649,31 +647,39 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config, labels='dfc')
     # train_datagen = datagen.SegmentationDataGenerator(train_scene_paths, config, labels='dfc')
     # val_datagen = datagen.SegmentationDataGenerator(val_scene_paths, config, labels='dfc')
+    # set up class balancing (and class masking)
     if config['training_params']['class_weight'] == 'balanced':
-        class_weights = train_datagen.get_class_weights_balanced()
-        def balanced_loss(onehot_labels, probs):
-            """
-            scale loss based on class weights
-            https://github.com/keras-team/keras/issues/3653#issuecomment-344068439
-            """
-            # computer weights based on onehot labels
-            weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
-            # compute (unweighted) cross entropy loss
-            unweighted_losses = categorical_crossentropy(onehot_labels, probs)
-            # apply the weights, relying on broadcasting of the multiplication
-            weighted_losses = unweighted_losses * weights
-            # reduce the result to get your final loss
-            loss = tf.reduce_mean(weighted_losses)
-            return loss
-        loss = balanced_loss
         print('training with balanced loss...')
+        class_weights = train_datagen.get_class_weights_balanced()
     else:
-        class_weights = None
-        loss = 'categorical_crossentropy'
         print('training with unbalanced loss...')
+        class_weights = np.ones(len(label_encoder.classes_))
+    def custom_loss(onehot_labels, probs):
+        """
+        scale loss based on class weights
+        https://github.com/keras-team/keras/issues/3653#issuecomment-344068439
+        """
+        # computer weights based on onehot labels
+        weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
+        # compute (unweighted) cross entropy loss
+        unweighted_losses = categorical_crossentropy(onehot_labels, probs)
+        # apply the weights, relying on broadcasting of the multiplication
+        weighted_losses = unweighted_losses * weights
+        # mask out '0' index
+        if len(config[f'{labels}_ignored_classes']) > 0:
+            print('ignoring 0 index in loss function')
+            mask_value = np.zeros(len(label_encoder.classes_), dtype='float32')
+            mask_value[0] = 1.0
+            mask_value = tf.Variable(mask_value)
+            mask = tf.reduce_all(tf.equal(onehot_labels, mask_value), axis=-1)
+            mask = 1 - tf.cast(mask, tf.float32)
+            weighted_losses = weighted_losses * mask
+            return tf.reduce_sum(weighted_losses) / tf.reduce_sum(mask)
+        # reduce the result to get your final loss
+        loss = tf.reduce_mean(weighted_losses)
+        return loss
     # get compiled keras model
-    label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_fc_densenet(config, label_encoder, loss=loss)
+    model = get_compiled_fc_densenet(config, label_encoder, loss=custom_loss)
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -761,7 +767,7 @@ def train_fc_densenet_on_all_scenes(config):
     '''
     print("--- Training FC-DenseNet model on all scenes ---")
     # get filepaths
-    filename = 'sen12ms_all-scenes_label-smoothing-{}_balanced_8-classes_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
+    filename = 'sen12ms_all-scenes_label-smoothing-{}_balanced_ignore-3-8_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
     weights_path = os.path.join(
         config['model_save_dir'],
         filename)

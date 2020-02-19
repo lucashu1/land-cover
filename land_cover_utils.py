@@ -51,6 +51,10 @@ def get_label_encoder(config, labels='dfc'):
         return None
     # sort class_nums
     class_nums_sorted = sorted(list(remaining_classes))
+    # if we're masking some classes, reserve '0' index
+    if config[f'{labels}_ignored_classes'] is not None and \
+        len(config[f'{labels}_ignored_classes']) > 0:
+        class_nums_sorted = [0] + class_nums_sorted
     # get label_encoder
     label_encoder = LabelEncoder()
     label_encoder.classes_ = np.array(class_nums_sorted)

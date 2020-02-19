@@ -20,6 +20,8 @@
     ],
     "s1_input_bands": ["VV", "VH"],
     "s1_max_val": 28004,
+    "s1_band_means": [-11.7, -18.59],
+    "s1_band_std": [4.54, 5.12],
     "s2_input_bands": [
         "blue", "green", "red",
         "re1", "re2", "re3",
@@ -27,6 +29,30 @@
         "swir1", "swir2"
     ],
     "s2_max_val": 28004,
+    "s2_band_means": [
+        1211.27,
+        1120.42,
+        1115.79,
+        1328.46,
+        1917.9,
+        2199.19,
+        2142.73,
+        2401.06,
+        1995.82,
+        1339.47
+    ],
+    "s2_band_std": [
+        693.62,
+        696.12,
+        907.65,
+        893.71,
+        945.63,
+        1049.74,
+        1025.17,
+        1108.55,
+        1103.76,
+        960.05
+    ],
     "dfc_class_descriptions": {
         "1": "Forest",
         "2": "Shrubland",
@@ -39,7 +65,8 @@
         "9": "Barren",
         "10": "Water"
     },
-    "dfc_removed_classes": [3, 8],
+    "dfc_removed_classes": [],
+    "dfc_ignored_classes": [3, 8],
     "landuse_class_descriptions": {
         "1": "Barren",
         "2": "Permanent Snow and Ice",
@@ -59,6 +86,7 @@
         "35": 30
     },
     "landuse_removed_classes": [0, 15, 16, 23, 37],
+    "landuse_ignored_classes": [],
     "experiment_params": {
         "num_models_per_season": 5,
         "train_scene_sampling_seed": 0,
@@ -67,7 +95,7 @@
         "val_split_seed": 10
     },
     "training_params": {
-        "gpu_id":"1",
+        "gpu_id":"0",
         "patch_size":256,
         "subpatch_size": 64,
         "val_size": 0.05,
@@ -76,9 +104,9 @@
         "do_color_aug": false,
         "use_multiprocessing": false,
         "workers": 1,
-        "num_scenes_in_mem": 8,
+        "label_scheme": "dfc",
         "label_smoothing": 0.1,
-        "class_weight": "balanced",
+        "class_weight": null,
         "geospatial_loss_weight": 1
     },
     "lr_reducer_params": {
