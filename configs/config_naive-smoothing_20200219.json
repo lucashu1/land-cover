@@ -7,6 +7,7 @@
     "subpatches_predictions_dir":"/data/lucas/sen12ms_subpatches_predictions",
     "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
     "competition_predictions_dir":"/data/lucas/sen12ms_competition_predictions",
+    "competition_holdout_scenes":"/home/lucas/land-cover/supp_data/competition_holdout_scenes.csv",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "competition_model": "sen12ms_all-scenes_s1-s2_label-smoothing-01_ignore-3-8_unet_weights.h5",
     "results_dir": "/home/lucas/land-cover/results",

@@ -37,12 +37,38 @@ def get_train_val_scene_dirs(scene_dirs, config):
     '''
     Input: scene_dirs (list), config
     Output: train_scene_dirs (list), val_scene_dirs (list)
+    Randomly split train/val scenes
     '''
     num_val_scenes = int(len(scene_dirs) * config['training_params']['val_size'])
     # set seed, and sort scene_dirs to get reproducible split
     np.random.seed(config['experiment_params']['val_split_seed'])
     val_scene_dirs = np.random.choice(sorted(scene_dirs), size=num_val_scenes).tolist()
     train_scene_dirs = list(set(scene_dirs) - set(val_scene_dirs))
+    return train_scene_dirs, val_scene_dirs
+
+def get_competition_train_val_scene_dirs(scene_dirs, config):
+    '''
+    Input: scene_dirs (list), config
+    Output: train_scene_dirs (list), val_scene_dirs (list)
+    Use holdout split from https://arxiv.org/pdf/2002.08254.pdf
+    '''
+    import csv
+    # get set of holdout season/scenes (e.g. summer/scene_63)
+    holdout_scenes_path = config['competition_holdout_scenes']
+    holdout_scenes = set()
+    with open(holdout_scenes_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+           holdout_scenes.add(f'{row["season"]}/scene_{row["scene"]}')
+    # sort each scene_dir into either train or val
+    train_scene_dirs = []
+    val_scene_dirs = []
+    for scene_dir in scene_dirs:
+        for holdout_str in holdout_scenes:
+            if holdout_str in scene_dir:
+                val_scene_dirs.append(scene_dir)
+            else:
+                train_scene_dirs.append(scene_dir)
     return train_scene_dirs, val_scene_dirs
 
 def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
@@ -150,6 +176,7 @@ def predict_model_path_on_validation_set(model_path, label_encoder, config):
 
 def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     predict_continents=False, predict_seasons=False, \
+    competition_mode=False, \
     predict_logits=False):
     '''
     Input: scene_dirs, weights_path, config
@@ -157,8 +184,12 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     Output: trained segmentation model (saved to disk), training history
     '''
     # get train, val scene dirs
-    print("Performing train/val split...")
-    train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
+    if competition_mode:
+        print("Getting competition train/val split from holdout .csv file...")
+        train_scene_dirs, val_scene_dirs = get_competition_train_val_scene_dirs(scene_dirs, config)
+    else:
+        print("Performing random train/val split...")
+        train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
 
@@ -310,7 +341,8 @@ def train_competition_fc_densenet(config):
     scene_dirs = []
     for season in config['all_seasons']:
         scene_dirs.extend(land_cover_utils.get_scene_dirs_for_season(season, config))
-    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
+        competition_mode=True)
     return model, history
 
 def train_competition_unet(config):
@@ -335,7 +367,8 @@ def train_competition_unet(config):
     scene_dirs = []
     for season in config['all_seasons']:
         scene_dirs.extend(land_cover_utils.get_scene_dirs_for_season(season, config))
-    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, predict_logits=True)
+    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
+        predict_logits=True, competition_mode=True)
     return model, history
 
 def main(args):

@@ -9,6 +9,8 @@ Resulting directory structure:
 continent-season -> scene_id -> patch_id -> (s2.npy, landuse.npy)
 '''
 
+import sys
+sys.path.append('../')
 import os
 import json
 import argparse
@@ -60,6 +62,7 @@ def main(args):
     s2_band_max = np.zeros(len(config['s2_input_bands']))
     # read dataset
     for season in ALL_SEASONS:
+        continue
         if season == 'ROIs0000_validation':
             continue
         for scene in sen12ms.get_scene_ids(season):
@@ -111,6 +114,8 @@ def main(args):
                 patch, s2_bands=config['s2_input_bands'])
             # move bands to last axis
             s1, s2, lc = np.moveaxis(s1, 0, -1), np.moveaxis(s2, 0, -1), np.moveaxis(lc, 0, -1)
+            igbp = lc[:,:,0].astype('uint8')
+            dfc = IGBP2DFC[igbp].astype('uint8') # simplified IGBP
             val_save_dir = os.path.join(
                 config['segmentation_dataset_dir'],
                 val_season,
@@ -121,6 +126,7 @@ def main(args):
             # save (s1,s2) only (for prediction)
             # np.save(os.path.join(val_save_dir, "s1.npy"), s2)
             # np.save(os.path.join(val_save_dir, "s2.npy"), s2)
+            np.save(os.path.join(val_save_dir, "dfc.npy"), dfc)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Save SEN12MS patches as .npy files')

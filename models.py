@@ -176,20 +176,21 @@ def get_compiled_fc_densenet(config, label_encoder, \
             metrics=['accuracy'])
         return full_model
 
-def get_compiled_unet(config, label_encoder, loss='categorical_crossentropy', predict_logits=False):
+def get_compiled_unet(config, label_encoder, loss='categorical_crossentropy', predict_logits=False, large=True):
     '''
     Input: config dict, label_encoder, loss (string or callable), predict_logits (boolean)
     Output: compiled Unet model
     '''
     activation = 'linear' if predict_logits else 'softmax'
     n_bands = len(config['s1_input_bands']) + len(config['s2_input_bands'])
+    decoder_filters = (256,128,64,32,16) if large else (64,32,32,32,32)
     model = Unet(
         backbone_name=config['unet_params']['backbone_name'],
         encoder_weights=None,
         activation=activation,
         input_shape=(None, None, n_bands),
-        classes=len(label_encoder.classes_)
-        # decoder_filters=(256,128,64,64)
+        classes=len(label_encoder.classes_),
+        decoder_filters=decoder_filters
     )
     model.compile(loss=loss,
         optimizer=Nadam(lr=config['unet_params']['learning_rate']),
