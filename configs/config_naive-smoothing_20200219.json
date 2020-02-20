@@ -10,8 +10,8 @@
     "model_save_dir": "/home/lucas/land-cover/saved_models",
     "competition_model": "sen12ms_all-scenes_s1-s2_label-smoothing-01_ignore-3-8_Unet_weights.h5",
     "results_dir": "/home/lucas/land-cover/results",
-    "continents_json_path":"/home/lucas/land-cover/continents.json",
-    "scene_locations_json_path":"/home/lucas/land-cover/all_scene_locations.json",
+    "continents_json_path":"/home/lucas/land-cover/supp_data/continents.json",
+    "scene_locations_json_path":"/home/lucas/land-cover/supp_data/all_scene_locations.json",
     "num_scenes_total": 252,
     "all_continents": [
         "Africa", "Asia", "Australia", "Europe", "North_America", "South_America"

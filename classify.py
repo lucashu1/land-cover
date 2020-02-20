@@ -463,6 +463,7 @@ def main(args):
     config_json_path = args.config_path
     with open(config_json_path, 'r') as f:
         config = json.load(f, object_hook=land_cover_utils.json_keys_to_int)
+
     # configure GPU
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     GPU_ID = config['training_params'].get('gpu_id')
@@ -471,6 +472,7 @@ def main(args):
     tf_config = tf.ConfigProto()
     tf_config.gpu_options.allow_growth = True
     session = tf.Session(config=tf_config)
+
     # show summary of keras models
     if args.model_summary:
         label_encoder = land_cover_utils.get_label_encoder(config)
@@ -480,6 +482,7 @@ def main(args):
         print('inputs: ', fc_densenet.inputs)
         print('outputs: ', fc_densenet.outputs)
         print()
+
     # train new models on all seasons/continents
     if args.train:
         # # train densenet models
@@ -489,6 +492,7 @@ def main(args):
         #     train_fc_densenet_on_season(season, config)
         # train_competition_fc_densenet(config)
         train_competition_unet(config)
+
     # save each model's predictions on each scene
     if args.predict:
         # predict_saved_models_on_each_scene(config)
@@ -497,6 +501,7 @@ def main(args):
         label_encoder = land_cover_utils.get_label_encoder(config)
         print(f'label_encoder.classes_: {label_encoder.classes_}')
         predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
+
     # evaluate saved models on each season/scene
     if args.test:
         evaluate_saved_models_on_each_season(config)

@@ -59,7 +59,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
                 self.label_counts = None
                 self.label_counts = self.get_label_counts()
 
-        # label smoothing
+        # kmeans label smoothing helpers
         if self.labels == 'kmeans':
             kmeans_tup = joblib.load(config['kmeans_params']['kmeans_path'])
             self.kmeans, self.cluster_to_label_mapping, self.cluster_to_label_probabilities = kmeans_tup
