@@ -32,11 +32,12 @@ def make_history_json_serializable(history):
             new_history[k] = [float(x) for x in v]
     return new_history
 
-def get_label_encoder(config, labels='dfc'):
+def get_label_encoder(config):
     '''
     Uses config_dict's landuse_class info to get an sklearn label_encoder
     Output: sklearn label_encoder
     '''
+    labels = config['training_params']['label_scheme']
     # get remaining classes after merging
     if labels == 'landuse':
         merged_classes = set(config['landuse_class_mappings'].keys())

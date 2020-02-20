@@ -45,134 +45,6 @@ def get_train_val_scene_dirs(scene_dirs, config):
     train_scene_dirs = list(set(scene_dirs) - set(val_scene_dirs))
     return train_scene_dirs, val_scene_dirs
 
-def get_model_history_filepath(train_season, train_scene_ids, config):
-    '''
-    Inputs: train_season, train_scene_ids, config dict
-    Output: model filepath, history filepath
-    '''
-    # if train_scene_ids is not a list, cast it to a list
-    if not isinstance(train_scene_ids, (list, np.ndarray)):
-        train_scene_ids = [train_scene_ids]
-    model_type = 'resnet' + str(config['resnet_params']['depth'])
-    model_name = 'sen12ms_%s_scene_%s_model_%s.h5' % \
-        (str(train_season.value), \
-        '+'.join([str(scene) for scene in train_scene_ids]), \
-        model_type)
-    model_filepath = os.path.join(config['model_save_dir'], model_name)
-    history_filepath = model_filepath.split('.h5')[0] + '_history.json'
-    return model_filepath, history_filepath
-
-def train_resnet_on_scene_dirs(scene_dirs, weights_path, config, \
-    predict_continents=False, predict_seasons=False):
-    '''
-    Input: scene_dirs, weights_path, config
-    Output: trained ResNet model (saved to disk), training history
-    '''
-    # get train, val subpatch .npy dirs
-    print("Performing train/val split...")
-    train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
-    print("train_scene_dirs: ", train_scene_dirs)
-    print("val_scene_dirs: ", val_scene_dirs)
-    # save train-val split
-    history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
-    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
-    with open(train_split_filepath, 'w') as f:
-        train_split = {
-            'train_scene_dirs': train_scene_dirs,
-            'val_scene_dirs': val_scene_dirs
-        }
-        json.dump(train_split, f, indent=4)
-    # get subpatch filepaths
-    train_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(train_scene_dirs)
-    val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
-    # get compiled keras model
-    label_encoder = land_cover_utils.get_label_encoder(config)
-    model = models.get_compiled_resnet(config, label_encoder, predict_continents, predict_seasons)
-    # set up callbacks, data generators
-    callbacks = models.get_callbacks(weights_path, config)
-    train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config, \
-        return_labels=True)
-    val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config, \
-        return_labels=True)
-    # fit keras model
-    print("Training keras model...")
-    history = None
-    history = model.fit_generator(
-        train_datagen,
-        epochs=config['training_params']['max_epochs'],
-        validation_data=val_datagen,
-        callbacks=callbacks,
-        max_queue_size=config['resnet_params']['batch_size'],
-        use_multiprocessing=config['training_params']['use_multiprocessing'],
-        workers=config['training_params']['workers']
-    )
-    history = land_cover_utils.make_history_json_serializable(history.history)
-    # save model history
-    with open(history_filepath, 'w') as f:
-        json.dump(history, f, indent=4)
-    print("Model history saved to: ", history_filepath)
-    return model, history
-
-def train_resnet_on_continent(continent, config):
-    '''
-    Input: continent, config
-    Output: trained ResNet model (saved to disk), training history
-    '''
-    print("--- Training ResNet model on {} ---".format(continent))
-    # get filepaths
-    if not predict_continents and not predict_seasons:
-        filename = 'sen12_continent_{}_resnet-{}_weights.h5'.format(continent, config['resnet_params']['depth'])
-    elif predict_continents and not predict_seasons:
-        filename = 'sen12_continent_{}_resnet-{}_predict-continents_weights.h5'.format(continent, config['resnet_params']['depth'])
-    elif predict_seasons and not predict_continents:
-        filename = 'sen12_continent_{}_resnet-{}_predict-seasons_weights.h5'.format(continent, config['resnet_params']['depth'])
-    else:
-        filename = 'sen12_continent_{}_resnet-{}_predict-continents-seasons_weights.h5'.format(continent, config['resnet_params']['depth'])
-    weights_path = os.path.join(
-        config['model_save_dir'],
-        'by_continent',
-        filename)
-    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
-    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
-    # check if model exists
-    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
-        print('files for model {} already exist! skipping training'.format(weights_path))
-        return
-    # train model
-    scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config)
-    model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
-    return model, history
-
-def train_resnet_on_season(season, config):
-    '''
-    Input: season, config
-    Output: trained ResNet model (saved to disk), training history
-    '''
-    print("--- Training ResNet model on {} ---".format(season))
-    # get filepaths
-    if not predict_continents and not predict_seasons:
-        filename = 'sen12_season_{}_resnet-{}_weights.h5'.format(season, config['resnet_params']['depth'])
-    elif predict_continents and not predict_seasons:
-        filename = 'sen12_season_{}_resnet-{}_predict-continents_weights.h5'.format(season, config['resnet_params']['depth'])
-    elif predict_seasons and not predict_continents:
-        filename = 'sen12_season_{}_resnet-{}_predict-seasons_weights.h5'.format(season, config['resnet_params']['depth'])
-    else:
-        filename = 'sen12_season_{}_resnet-{}_predict-continents-seasons_weights.h5'.format(season, config['resnet_params']['depth'])
-    weights_path = os.path.join(
-        config['model_save_dir'],
-        'by_season',
-        filename)
-    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
-    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
-    # check if model exists
-    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
-        print('files for model {} already exist! skipping training'.format(weights_path))
-        return
-    # train model
-    scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config)
-    model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
-    return model, history
-
 def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
     '''
     Use segmentation model to predict on a single scene_dir
@@ -185,7 +57,7 @@ def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label
     # prep datagen
     patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dir(scene_dir)
     patch_ids = [int(path.split('patch_')[-1]) for path in patch_paths]
-    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, return_labels=True)
+    predict_datagen = datagen.SegmentationDataGenerator(patch_paths, config, labels=None)
     # predict
     predictions = model.predict_generator(predict_datagen)
     # post-process predictions
@@ -202,35 +74,6 @@ def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label
             path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_id))
             np.savez_compressed(path, pred)
     print('saved fc-densenet predictions to {}'.format(save_dir))
-    return predictions
-
-def save_resnet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config):
-    '''
-    Use ResNet model to predict on a single scene_dir
-    Store predictions in .npz files (1 file per scene)
-    '''
-    # prep datagen
-    print('generating predictions to {}...'.format(save_dir))
-    subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dir(scene_dir)
-    patch_ids = [int(path.split('/patch_')[-1].split('/')[0]) for path in subpatch_paths]
-    predict_datagen = datagen.SubpatchDataGenerator(subpatch_paths, config, return_labels=False)
-    # predict
-    predictions = model.predict_generator(predict_datagen)
-    # post-process predictions
-    predictions = np.argmax(predictions, axis=-1)
-    predictions = predictions.astype('uint8')
-    # save to .npz, indexed by patch_id (each file = predictions on subpatches from 1 patch)
-    if os.path.exists(save_dir):
-        print('save_dir {} already exists! skipping prediction'.format(save_dir))
-        return
-    else:
-        os.makedirs(save_dir)
-    subpatches_per_patch = config['training_params']['patch_size'] // config['training_params']['subpatch_size']
-    for i in range(0, len(patch_ids), subpatches_per_patch):
-        assert len(set(patch_ids[i:i+subpatches_per_patch])) == 1 # all subpatches from 1 patch
-        path = os.path.join(save_dir, 'patch_{}.npz'.format(patch_ids[i]))
-        np.savez_compressed(path, predictions[i:i+subpatches_per_patch])
-    print('saved resnet predictions to {}'.format(save_dir))
     return predictions
 
 def predict_model_path_on_each_scene(model_path, label_encoder, config):
@@ -436,6 +279,7 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     predict_logits=False):
     '''
     Input: scene_dirs, weights_path, config
+    save_label_counts =  config['training_params']['class_weight'] == 'balanced'
     Output: trained segmentation model (saved to disk), training history
     '''
     # get train, val scene dirs
@@ -443,6 +287,7 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
+
     # save train-val-split
     train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
     with open(train_split_filepath, 'w') as f:
@@ -451,18 +296,24 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
             'val_scene_dirs': val_scene_dirs,
         }
         json.dump(train_split, f, indent=4)
-    # get label_encoder, patch_paths
-    labels = config['training_params']['label_scheme']
-    label_encoder = land_cover_utils.get_label_encoder(config, labels=labels)
+
+    # get patch paths
     train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
-    # set up callbacks, data generators
-    callbacks = models.get_callbacks(weights_path, config)
-    save_label_counts =  config['training_params']['class_weight'] == 'balanced'
-    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, \
-            save_label_counts=save_label_counts)
-    val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config)
+
+    # set up data generators with label smoothing
+    if config['training_params']['label_smoothing'] == 'kmeans':
+        train_datagen_labels = 'kmeans'
+        print('training with kmeans label smoothing...')
+    else:
+        train_datagen_labels = 'naive'
+        label_smoothing_factor = config['training_params']['label_smoothing_factor']
+        print(f'training with naive label smoothing, factor={label_smoothing_factor}...')
+    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config, labels=train_datagen_labels)
+    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config, labels='onehot')
+
     # get custom loss function
+    label_encoder = land_cover_utils.get_label_encoder(config)
     if config['training_params']['class_weight'] == 'balanced':
         print('training with balanced loss...')
         class_weights = train_datagen.get_class_weights_balanced()
@@ -470,10 +321,13 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
         print('training with unbalanced loss...')
         class_weights = np.ones(len(label_encoder.classes_))
     loss = models.get_custom_loss(label_encoder, class_weights, config, from_logits=predict_logits)
+
     # get compiled keras model
     model = models.get_compiled_fc_densenet(config, label_encoder, loss=loss)
+
     # fit keras model
     print("Training keras model...")
+    callbacks = models.get_callbacks(weights_path, config)
     history = model.fit_generator(
         train_datagen,
         epochs=config['training_params']['max_epochs'],
@@ -484,6 +338,7 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
         workers=config['training_params']['workers']
     )
     history = land_cover_utils.make_history_json_serializable(history.history)
+
     # save model history
     history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
     with open(history_filepath, 'w') as f:
@@ -619,12 +474,6 @@ def main(args):
     # show summary of keras models
     if args.model_summary:
         label_encoder = land_cover_utils.get_label_encoder(config)
-        resnet = models.get_compiled_resnet(config, label_encoder, predict_seasons=True)
-        print('----------- RESNET MODEL SUMMARY ----------')
-        #print(resnet.summary())
-        print('inputs: ', resnet.inputs)
-        print('outputs: ', resnet.outputs)
-        print()
         fc_densenet = models.get_compiled_fc_densenet(config, label_encoder, predict_seasons=True)
         print('---------- FC-DENSENET MODEL SUMMARY ----------')
         #print(fc_densenet.summary())
@@ -633,11 +482,6 @@ def main(args):
         print()
     # train new models on all seasons/continents
     if args.train:
-        # # train resnet models
-        # for continent in config['all_continents']:
-        #     train_resnet_on_continent(continent, config)
-        # for season in config['all_seasons']:
-        #     train_resnet_on_season(season, config)
         # # train densenet models
         # for continent in config['all_continents']:
         #     train_fc_densenet_on_continent(continent, config)
@@ -650,7 +494,7 @@ def main(args):
         # predict_saved_models_on_each_scene(config)
         competition_model_path = os.path.join(config['model_save_dir'], config['competition_model'])
         print(f'predicting on competition data with model {competition_model_path}')
-        label_encoder = land_cover_utils.get_label_encoder(config, labels='dfc')
+        label_encoder = land_cover_utils.get_label_encoder(config)
         print(f'label_encoder.classes_: {label_encoder.classes_}')
         predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
     # evaluate saved models on each season/scene
