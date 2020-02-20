@@ -185,7 +185,7 @@ def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label
     # prep datagen
     patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dir(scene_dir)
     patch_ids = [int(path.split('patch_')[-1]) for path in patch_paths]
-    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, labels=None)
+    predict_datagen = datagen.SegmentationPatchDataGenerator(patch_paths, config, return_labels=True)
     # predict
     predictions = model.predict_generator(predict_datagen)
     # post-process predictions
@@ -459,9 +459,9 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     # set up callbacks, data generators
     callbacks = models.get_callbacks(weights_path, config)
     save_label_counts =  config['training_params']['class_weight'] == 'balanced'
-    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, labels='dfc', \
-            label_smoothing=config['training_params']['label_smoothing'], save_label_counts=save_label_counts)
-    val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config, labels='dfc')
+    train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, \
+            save_label_counts=save_label_counts)
+    val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config)
     # get custom loss function
     if config['training_params']['class_weight'] == 'balanced':
         print('training with balanced loss...')

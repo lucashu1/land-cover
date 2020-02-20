@@ -8,7 +8,7 @@
     "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
     "competition_predictions_dir":"/data/lucas/sen12ms_competition_predictions",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
-    "competition_model": "sen12ms_all-scenes_s1-s2_label-smoothing-0.1_ignore-3-8_Unet_weights.h5",
+    "competition_model": "sen12ms_all-scenes_s1-s2_kmeans-label-smoothing_ignore-3-8_Unet_weights.h5",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/continents.json",
     "scene_locations_json_path":"/home/lucas/land-cover/all_scene_locations.json",
@@ -107,7 +107,7 @@
         "workers": 1,
         "normalize_mode": "standardize",
         "label_scheme": "dfc",
-        "label_smoothing": 0.1,
+        "label_smoothing": "kmeans",
         "class_weight": "imbalanced",
         "geospatial_loss_weight": 1
     },
@@ -118,7 +118,7 @@
        "min_lr": 0.0000005
     },
     "kmeans_params": {
-        "kmean_path": "/home/caleb/code/lucas-land-cover/kmeans_16.p"
+        "kmeans_path": "/home/lucas/land-cover/kmeans/kmeans_16.p"
     },
     "resnet_params": {
         "learning_rate":0.0005,

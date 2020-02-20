@@ -11,4 +11,6 @@ CBAM-keras/*
 DenseNet/*
 CBAM-keras
 DenseNet
+kmeans
+kmeans/*
 

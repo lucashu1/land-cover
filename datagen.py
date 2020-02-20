@@ -7,7 +7,9 @@ Adapted from https://github.com/calebrob6/land-cover/blob/master/datagen.py
 import os
 import math
 import random
+import joblib
 import numpy as np
+from numbers import Number
 import keras.utils
 from land_cover_utils import get_label_encoder, \
     get_continents_label_encoder, get_seasons_label_encoder
@@ -29,10 +31,12 @@ def color_aug(colors):
 class SegmentationPatchDataGenerator(keras.utils.Sequence):
     'Generates semantic segmentation batch data for Keras'
     
-    def __init__(self, patch_paths, config, labels='dfc', label_smoothing=0, save_label_counts=False):
+    def __init__(self, patch_paths, config, return_labels=True, save_label_counts=False):
         'Initialization'
 
-        self.labels = labels
+        self.config = config
+        self.return_labels = return_labels
+        self.labels = config['training_params']['label_scheme']
         self.patch_paths = patch_paths
         self.batch_size = config['fc_densenet_params']['batch_size']
         self.steps_per_epoch = math.ceil(len(self.patch_paths) / self.batch_size)
@@ -40,25 +44,29 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
 
         self.input_size = config['training_params']['patch_size']
         self.num_channels = len(config['s2_input_bands']) + len(config['s1_input_bands'])
+        self.do_color_aug = config['training_params']['do_color_aug']
 
-        if labels is not None:
-            self.label_encoder = get_label_encoder(config, labels=labels)
+        # labels config
+        if self.return_labels:
+            self.label_encoder = get_label_encoder(config, labels=self.labels)
             self.num_classes = len(self.label_encoder.classes_)
-            self.removed_classes = config['{}_removed_classes'.format(labels)]
-            self.ignored_classes = config['{}_ignored_classes'.format(labels)]
-            self.label_smoothing = label_smoothing
+            self.removed_classes = np.array(config['{}_removed_classes'.format(self.labels)])
+            self.ignored_classes = np.array(config['{}_ignored_classes'.format(self.labels)])
+            self.label_smoothing = config['training_params']['label_smoothing']
             if save_label_counts:
                 self.label_counts = None
                 self.label_counts = self.get_label_counts()
 
-        self.config = config
-        self.do_color_aug = config['training_params']['do_color_aug']
+        # label smoothing
+        if self.return_labels and config['training_params']['label_smoothing'] == 'kmeans':
+            kmeans_tup = joblib.load(config['kmeans_params']['kmeans_path'])
+            self.kmeans, self.cluster_to_label_mapping, self.cluster_to_label_probabilities = kmeans_tup
 
         self.on_epoch_end()
 
     def get_label_counts(self):
         ''' return label counts '''
-        if self.labels is None:
+        if not self.return_labels:
             return
         if self.label_counts is not None:
             return self.label_counts
@@ -130,7 +138,7 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
                 s2 /= self.config['s2_max_val']
 
             # get labels
-            if self.labels is not None:
+            if self.return_labels:
                 labels = np.load(os.path.join(patch_path, "{}.npy".format(self.labels)))
                 labels = labels.squeeze()
                 assert labels.shape[0] == labels.shape[1]
@@ -143,15 +151,15 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
             assert s2.shape[0] == s2.shape[1]
             assert s2.shape[0] == self.input_size
 
-            if self.labels is not None and len(self.removed_classes) > 0:
-                # check for removed/ignored labels
+            # check for removed/ignored labels
+            if self.return_labels and len(self.removed_classes) > 0:
                 num_removed_classes = np.sum([np.count_nonzero(labels==c) \
                     for c in self.removed_classes])
                 if num_removed_classes > 0:
                     continue
 
-            if self.labels is not None and len(self.ignored_classes) > 0:
-                # mask out ignored classes (use reserved '0' index)
+            # mask out ignored classes (use reserved '0' index)
+            if self.return_labels and len(self.ignored_classes) > 0:
                 for c in self.ignored_classes:
                     labels[labels == c] = 0
 
@@ -159,34 +167,45 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
             x = np.concatenate((s1,s2), axis=-1) if len(self.config['s1_input_bands']) > 0 else s2
             x_batch.append(x)
 
-            if self.labels is not None:
-                # setup y (apply label-encoder)
+            # setup y (apply label-encoder)
+            if self.return_labels:
                 labels = self.label_encoder.transform(labels.flatten())
                 labels = labels.reshape((self.input_size, self.input_size))
                 y_batch.append(labels)
 
         # return X only
-        if self.labels == None:
+        if not self.return_labels:
             return np.array(x_batch)
 
         # convert x, y to numpy arrays
         x_batch = np.array(x_batch)
         y_batch = np.array(y_batch)
-        if len(self.ignored_classes) > 0:
-            y_batch_ignored = np.where(y_batch == 0)
 
         # one-hot encode labels
+        if len(self.ignored_classes) > 0:
+            y_batch_ignored = np.where(y_batch == 0)
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
 
-        # apply label smoothing: https://www.pyimagesearch.com/2019/12/30/label-smoothing-with-keras-tensorflow-and-deep-learning/
-        if self.label_smoothing is not None and self.label_smoothing > 0:
+        # naive label smoothing
+        # https://www.pyimagesearch.com/2019/12/30/label-smoothing-with-keras-tensorflow-and-deep-learning/
+        if isinstance(self.label_smoothing, Number) and self.label_smoothing > 0:
            y_batch *= (1.0-self.label_smoothing)
            y_batch += (self.label_smoothing / y_batch.shape[-1])
+
+        # k-means label-smoothing
+        elif self.label_smoothing == 'kmeans':
+            x_pixels = x_batch.reshape((-1, self.num_channels))
+            cluster_inds = self.kmeans.predict(x_pixels)
+            class_probs = self.cluster_to_label_probabilities[cluster_inds]
+            if len(self.ignored_classes) > 0:
+                class_probs = np.delete(class_probs, self.ignored_classes-1, axis=-1)
+                class_probs = np.concatenate((np.zeros((class_probs.shape[0],1)), class_probs), axis=-1)
+            class_probs = class_probs.reshape((self.batch_size, self.input_size, self.input_size, -1))
 
         # set ignored pixels = [1, 0, 0, ...]
         if len(self.ignored_classes) > 0:
             ignored_vec = np.zeros(self.num_classes)
-            ignored_vec[0] = 1.0
+            ignored_vec[0] = 1
             y_batch[y_batch_ignored] = ignored_vec
 
         assert x_batch.shape[0] == y_batch.shape[0]
@@ -195,7 +214,7 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
     def on_epoch_end(self):
         ''' Shuffle patches '''
         self.patch_index = 0
-        if self.labels is not None:
+        if self.return_labels:
             np.random.shuffle(self.patch_paths)
 
 class SubpatchDataGenerator(keras.utils.Sequence):
