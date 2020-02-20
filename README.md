@@ -9,6 +9,7 @@ Deep learning for land cover classification
 5. `git clone https://github.com/titu1994/DenseNet`
 6. Download and extract SEN12MS dataset: https://arxiv.org/abs/1906.07789
 7. Edit dataset paths in `config.json`
+8. Run `one_time_scripts/save_segmentation_patches_to_npy.py` to preprocess dataset
 
 ### Usage Instructions
 * Train models: `python classify.py -c config.json --train`

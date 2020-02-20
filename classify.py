@@ -88,7 +88,7 @@ def predict_model_path_on_each_scene(model_path, label_encoder, config):
     elif 'weights' in model_path and 'DenseNet' in model_path:
         model = models.get_compiled_fc_densenet(config, label_encoder)
         model.load_weights(model_path)
-    elif 'weights' in model_path and 'Unet' in model_path:
+    elif 'weights' in model_path and 'unet' in model_path.lower():
         model = models.get_compiled_unet(config, label_encoder, predict_logits=True)
         model.load_weights(model_path)
     else:
@@ -129,7 +129,7 @@ def predict_model_path_on_validation_set(model_path, label_encoder, config):
     Given a weights_path for an FC-DenseNet model,
     Save predictions on each scene in the Validation set
     '''
-    if 'Unet' in model_path:
+    if 'unet' in model_path.lower():
         model = models.get_compiled_unet(config, label_encoder, predict_logits=True)
     else:
         model = models.get_compiled_fc_densenet(config, label_encoder)
@@ -193,11 +193,18 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
         class_weights = train_datagen.get_class_weights_balanced()
     else:
         print('training with unbalanced loss...')
-        class_weights = np.ones(len(label_encoder.classes_))
+        class_weights = None
     loss = models.get_custom_loss(label_encoder, class_weights, config, from_logits=predict_logits)
 
     # get compiled keras model
-    model = models.get_compiled_fc_densenet(config, label_encoder, loss=loss)
+    if 'unet' in weights_path.lower():
+        print('getting compiled unet model...')
+        batch_size = config['unet_params']['batch_size']
+        model = models.get_compiled_unet(config, label_encoder, loss=loss, predict_logits=predict_logits)
+    else:
+        print('getting compiled densenet model...')
+        batch_size = config['fc_densenet_params']['batch_size']
+        model = models.get_compiled_fc_densenet(config, label_encoder, loss=loss)
 
     # fit keras model
     print("Training keras model...")
@@ -207,7 +214,7 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
         epochs=config['training_params']['max_epochs'],
         validation_data=val_datagen,
         callbacks=callbacks,
-        max_queue_size=config['unet_params']['batch_size'],
+        max_queue_size=batch_size,
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
@@ -291,6 +298,7 @@ def train_competition_fc_densenet(config):
     filename = config['competition_model']
     weights_path = os.path.join(
         config['model_save_dir'],
+        'competition',
         filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
@@ -315,6 +323,7 @@ def train_competition_unet(config):
     filename = config['competition_model']
     weights_path = os.path.join(
         config['model_save_dir'],
+        'competition',
         filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
@@ -370,7 +379,9 @@ def main(args):
     # save each model's predictions on each scene
     if args.predict:
         # predict_saved_models_on_each_scene(config)
-        competition_model_path = os.path.join(config['model_save_dir'], config['competition_model'])
+        competition_model_path = os.path.join(config['model_save_dir'], 
+            'competition', 
+            config['competition_model'])
         print(f'predicting on competition data with model {competition_model_path}')
         print(f'label_encoder.classes_: {label_encoder.classes_}')
         predict_model_path_on_validation_set(competition_model_path, label_encoder, config)

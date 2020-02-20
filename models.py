@@ -56,29 +56,32 @@ def get_custom_loss(label_encoder, class_weights, config, from_logits=False):
     mask_value[0] = 1
     mask_value = tf.Variable(mask_value)
     loss = categorical_crossentropy
+
     def custom_loss(onehot_labels, probs):
         """
         scale loss based on class weights
         https://github.com/keras-team/keras/issues/3653#issuecomment-344068439
         """
-        # computer weights based on onehot labels
-        weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
         # compute (unweighted) cross entropy loss
-        unweighted_losses = categorical_crossentropy(onehot_labels, probs, from_logits=from_logits)
-        # apply the weights, relying on broadcasting of the multiplication
-        weighted_losses = unweighted_losses * weights
+        losses = categorical_crossentropy(onehot_labels, probs, from_logits=from_logits)
+        # apply class_weight
+        if class_weights is not None:
+            # computer weights based on onehot labels
+            weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
+            # apply the weights, relying on broadcasting of the multiplication
+            losses = losses * weights
         # mask out '0' index
         if len(config[f'{labels}_ignored_classes']) > 0:
             print('ignoring 0 index in loss function')
             mask = tf.reduce_all(tf.equal(onehot_labels, mask_value), axis=-1)
             mask = 1 - tf.cast(mask, tf.float32)
             # mask = tf.Print(mask, [mask])
-            weighted_losses = weighted_losses * mask
-            # weighted_losses = tf.Print(weighted_losses, [weighted_losses])
-            return tf.reduce_mean(weighted_losses)
+            losses = losses * mask
+            # losses = tf.Print(losses, [losses])
         # reduce the result to get your final loss
-        loss = tf.reduce_mean(weighted_losses)
+        loss = tf.reduce_mean(losses)
         return loss
+
     # return custom loss function
     return custom_loss
 
@@ -173,21 +176,22 @@ def get_compiled_fc_densenet(config, label_encoder, \
             metrics=['accuracy'])
         return full_model
 
-def get_compiled_unet(config, label_encoder, predict_logits=False):
+def get_compiled_unet(config, label_encoder, loss='categorical_crossentropy', predict_logits=False):
     '''
-    Input: config dict, label_encoder
+    Input: config dict, label_encoder, loss (string or callable), predict_logits (boolean)
     Output: compiled Unet model
     '''
     activation = 'linear' if predict_logits else 'softmax'
+    n_bands = len(config['s1_input_bands']) + len(config['s2_input_bands'])
     model = Unet(
         backbone_name=config['unet_params']['backbone_name'],
         encoder_weights=None,
         activation=activation,
-        input_shape=config['training_params']['patch_size'],
-        classes=len(label_encoder.classes_),
-        decoder_filters=(256,128,64,64)
+        input_shape=(None, None, n_bands),
+        classes=len(label_encoder.classes_)
+        # decoder_filters=(256,128,64,64)
     )
-    model.compile(loss='categorical_crossentropy',
+    model.compile(loss=loss,
         optimizer=Nadam(lr=config['unet_params']['learning_rate']),
         metrics=['accuracy'])
     return model

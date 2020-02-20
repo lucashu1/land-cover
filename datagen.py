@@ -185,7 +185,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
 
         # one-hot encode labels
         if len(self.ignored_classes) > 0:
-            y_batch_ignored = np.where(y_batch == 0)
+            y_batch_ignored = np.where(y_batch == 0) # get indices where y_batch = '0'
         y_batch = keras.utils.to_categorical(y_batch, num_classes=self.num_classes)
 
         # naive label smoothing
@@ -200,9 +200,10 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             cluster_inds = self.kmeans.predict(x_pixels)
             class_probs = self.cluster_to_label_probabilities[cluster_inds]
             if len(self.ignored_classes) > 0:
-                class_probs = np.delete(class_probs, self.ignored_classes-1, axis=-1)
-                class_probs = np.concatenate((np.zeros((class_probs.shape[0],1)), class_probs), axis=-1)
-            class_probs = class_probs.reshape((self.batch_size, self.input_size, self.input_size, -1))
+                class_probs = np.delete(class_probs, self.ignored_classes-1, axis=-1) # remove ignored classes
+                class_probs = np.concatenate((np.zeros((class_probs.shape[0],1)), class_probs), axis=-1) # add dummy channel (for masking)
+            class_probs = class_probs.reshape((x_batch.shape[0], self.input_size, self.input_size, -1))
+            y_batch = class_probs
 
         # set ignored pixels = [1, 0, 0, ...]
         if len(self.ignored_classes) > 0:
