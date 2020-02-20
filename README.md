@@ -1,5 +1,5 @@
 # land-cover
-Deep learning for land cover mapping
+Deep learning for land cover classification
 
 ### Setup Instructions
 1. `git clone` this repository
@@ -12,4 +12,5 @@ Deep learning for land cover mapping
 
 ### Usage Instructions
 * Train models: `python classify.py -c config.json --train`
-* Evaluate models: `python classify.py -c config.json --test`
+* Generate predictions: `python classify.py -c config.json --predict`
+
