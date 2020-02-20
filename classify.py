@@ -64,11 +64,11 @@ def get_competition_train_val_scene_dirs(scene_dirs, config):
     train_scene_dirs = []
     val_scene_dirs = []
     for scene_dir in scene_dirs:
-        for holdout_str in holdout_scenes:
-            if holdout_str in scene_dir:
-                val_scene_dirs.append(scene_dir)
-            else:
-                train_scene_dirs.append(scene_dir)
+        # check if this scene_dir matches anything in the holdout set
+        if any([scene in scene_dir for scene in holdout_scenes]):
+            val_scene_dirs.append(scene_dir)
+        else:
+            train_scene_dirs.append(scene_dir)
     return train_scene_dirs, val_scene_dirs
 
 def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
@@ -192,6 +192,8 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
         train_scene_dirs, val_scene_dirs = get_train_val_scene_dirs(scene_dirs, config)
     print("train_scene_dirs: ", train_scene_dirs)
     print("val_scene_dirs: ", val_scene_dirs)
+    print('num. training scenes: ', len(train_scene_dirs))
+    print('num. validation scenes: ', len(val_scene_dirs))
 
     # save train-val-split
     train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
