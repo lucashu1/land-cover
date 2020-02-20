@@ -43,7 +43,7 @@ def get_label_encoder(config, labels='dfc'):
         all_classes = set(config['landuse_class_descriptions'].keys())
         remaining_classes = all_classes - merged_classes
     elif labels == 'dfc':
-        removed_classes = set(config['dfc_removed_classes'])
+        removed_classes = set(config['dfc_removed_classes']) | set(config['dfc_ignored_classes'])
         all_classes = set(config['dfc_class_descriptions'].keys())
         remaining_classes = all_classes - removed_classes
     else:

@@ -10,6 +10,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # General imports
+import os
 import glob
 import argparse
 import json
@@ -19,24 +20,7 @@ from scipy import stats
 import imageio
 import tensorflow as tf
 import keras
-from keras.layers import Dense, Flatten
 from keras.models import Model, load_model
-from keras.optimizers import Adam, Nadam
-from keras.losses import categorical_crossentropy
-from keras.callbacks import ModelCheckpoint, \
-    LearningRateScheduler, ReduceLROnPlateau, \
-    EarlyStopping
-
-# ResNet imports
-import sys
-import os
-sys.path.append('./CBAM-keras')
-from models import resnet_v1
-from utils import lr_schedule
-
-# DenseNet imports
-sys.path.append('./DenseNet')
-from densenet import DenseNetFCN
 
 # SEN12MS imports
 from sen12ms_dataLoader import SEN12MSDataset, \
@@ -44,181 +28,10 @@ from sen12ms_dataLoader import SEN12MSDataset, \
 
 # util imports
 import datagen
+import models
 import land_cover_utils
 
 ALL_SEASONS = [season for season in Seasons if season != Seasons.ALL]
-
-def preprocess_s2_lc_for_classification(s2, lc, config, label_encoder, patch_ids=None):
-    '''
-    Input: s2, lc, config, label_encoder
-    Output: X (s2 subpatches), y (one-hot labels)
-    '''
-    # move bands to last axis
-    s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
-    s2 = s2.astype(np.float32) / config['s2_max_val'] # normalize S2
-    # get subpatches
-    if patch_ids is not None:
-        s2, patch_ids = land_cover_utils.scene_to_subpatches(s2, config, patch_ids)
-        lc, patch_ids = land_cover_utils.scene_to_subpatches(lc, config, patch_ids)
-    else:
-        s2 = land_cover_utils.scene_to_subpatches(s2, config)
-        lc = land_cover_utils.scene_to_subpatches(lc, config)
-    # get majority classes
-    labels = land_cover_utils.get_landuse_labels(lc, config)
-    # remove instances with '0' mode label
-    zero_label_inds = np.where(labels == 0)[0]
-    if config['verbose'] >= 1 and len(zero_label_inds) > 0:
-        print('Removing {} instances with "0" landuse label'.format(len(zero_label_inds)))
-    labels = np.delete(labels, zero_label_inds, axis=0)
-    s2 = np.delete(s2, zero_label_inds, axis=0)
-    if patch_ids is not None:
-        patch_ids = np.delete(patch_ids, zero_label_inds, axis=0)
-    assert not (0 in labels)
-    assert s2.shape[0] == labels.shape[0]
-    # one-hot encode labels
-    labels = label_encoder.transform(labels)
-    y = keras.utils.to_categorical(labels, num_classes=len(label_encoder.classes_))
-    X = s2
-    if patch_ids is not None:
-        return X, y, patch_ids
-    else:
-        return X, y
-
-def preprocess_s2_lc_for_segmentation(s2, lc, config, label_encoder, patch_ids=None):
-    '''
-    Input: s2, lc, config, label_encoder
-    Output: X (s2 patches), y (one-hot land-use patches)
-    '''
-    img_size = config['training_params']['patch_size']
-    num_classes = len(label_encoder.classes_)
-    # move bands to last axis
-    s2, lc = np.moveaxis(s2, 1, -1), np.moveaxis(lc, 1, -1)
-    s2 = s2.astype(np.float32) / config['s2_max_val'] # normalize S2
-    # get landuse labels
-    landuse = lc[:, :, :, LCBands.landuse.value-1]
-    landuse = land_cover_utils.combine_landuse_classes(landuse, config)
-    # delete patches with unknown landuse values
-    unknown_landuse_inds = np.where(np.isin(landuse, config['landuse_unknown_classes'])==True)[0]
-    if config['verbose'] >= 1 and len(unknown_landuse_inds) > 0:
-        print('Removing {} instances with unknown landuse label'.format(len(unknown_landuse_inds)))
-    landuse = np.delete(landuse, unknown_landuse_inds, axis=0)
-    s2 = np.delete(s2, unknown_landuse_inds, axis=0)
-    if patch_ids is not None:
-        patch_ids = np.delete(patch_ids, unknown_landuse_inds, axis=0)
-    # encode labels
-    landuse = label_encoder.transform(landuse.flatten()).reshape((landuse.shape[0],img_size,img_size))
-    y = keras.utils.to_categorical(landuse, num_classes=num_classes)
-    X = s2
-    assert X.shape[0] == y.shape[0]
-    if patch_ids is not None:
-        return X, y, patch_ids
-    else:
-        return X, y
-
-def get_compiled_resnet(config, label_encoder, \
-    predict_continents=False, predict_seasons=False):
-    '''
-    Input: config dict, label_encoder
-    Output: compiled ResNet model
-    '''
-    num_classes = len(label_encoder.classes_)
-    # init resnet
-    input_shape=(config['training_params']['subpatch_size'], \
-        config['training_params']['subpatch_size'], \
-        len(config['s2_input_bands']))
-    model = resnet_v1.resnet_v1(input_shape=input_shape, \
-        num_classes=len(label_encoder.classes_), \
-        depth=config['resnet_params']['depth'], \
-        attention_module=None)
-    if not predict_continents and not predict_seasons:
-        model.compile(loss='categorical_crossentropy',
-            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return model
-    if predict_continents and predict_seasons:
-        print('WARNING: cannot have predict_continents and predict_seasons both set to True!')
-    # return model with 'continent' output
-    if predict_continents:
-        last_flatten = list(filter(lambda layer: 'flatten' in layer.name, model.layers))[-1] # end of last residual block
-        continent_output = Dense(len(config['all_continents']), activation='softmax')(last_flatten.output)
-        full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
-        full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
-            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return full_model
-    # return model with 'season' output
-    elif predict_seasons:
-        last_flatten = list(filter(lambda layer: 'flatten' in layer.name, model.layers))[-1] # end of last residual block
-        season_output = Dense(len(config['all_seasons']), activation='softmax')(last_flatten.output)
-        full_model = Model(model.inputs[0], [model.outputs[0], season_output])
-        full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
-            optimizer=Nadam(lr=config['resnet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return full_model
-
-def get_compiled_fc_densenet(config, label_encoder, \
-    predict_continents=False, predict_seasons=False, \
-    loss='categorical_crossentropy'):
-    '''
-    Input: config_dict, label_encoder
-    Output: compiled FC-DenseNet model
-    '''
-    # init FC DenseNet
-    num_classes = len(label_encoder.classes_)
-    img_size = config['training_params']['patch_size']
-    input_shape=(img_size, img_size, len(config['s1_input_bands'])+len(config['s2_input_bands']))
-    model = DenseNetFCN(input_shape, include_top=True, weights=None, \
-        classes=num_classes, \
-        nb_dense_block=config['fc_densenet_params']['nb_dense_block'], \
-        activation='softmax')
-    if not predict_continents and not predict_seasons:
-        model.compile(loss=loss,
-            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return model
-    if predict_continents and predict_seasons:
-        print('WARNING: cannot have predict_continents and predict_seasons both set to True!')
-    if predict_continents:
-        last_concat = list(filter(lambda layer: 'concatenate' in layer.name, model.layers))[-1] # end of last DenseNet block
-        continent_output = Flatten()(last_concat.output)
-        continent_output = Dense(len(config['all_continents']), activation='softmax')(continent_output)
-        full_model = Model(model.inputs[0], [model.outputs[0], continent_output])
-        full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
-            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return full_model
-    elif predict_seasons:
-        last_concat = list(filter(lambda layer: 'concatenate' in layer.name, model.layers))[-1] # end of last DenseNet block
-        season_output = Flatten()(last_concat.output)
-        season_output = Dense(len(config['all_seasons']), activation='softmax')(season_output)
-        full_model = Model(model.inputs[0], [model.outputs[0], season_output])
-        full_model.compile(loss='categorical_crossentropy',
-            loss_weights=[1,-config['training_params']['geospatial_loss_weight']],
-            optimizer=Nadam(lr=config['fc_densenet_params']['learning_rate']),
-            metrics=['accuracy'])
-        return full_model
-
-def get_callbacks(filepath, config):
-    '''
-    Input: model save filepath, config
-    Output: model training callbacks
-    '''
-    checkpoint = ModelCheckpoint(filepath=filepath,
-                                 monitor='val_loss',
-                                 verbose=1,
-                                 save_best_only=True,
-                                 save_weights_only=True)
-    early_stopping = EarlyStopping(monitor='val_loss',
-                                   patience=config['training_params']['early_stopping_patience'],
-                                   restore_best_weights=True)
-    lr_reducer = ReduceLROnPlateau(factor=config['lr_reducer_params']['factor'],
-                                   cooldown=config['lr_reducer_params']['cooldown'],
-                                   patience=config['lr_reducer_params']['patience'],
-                                   min_lr=config['lr_reducer_params']['min_lr'])
-    return [checkpoint, early_stopping, lr_reducer]
 
 def get_train_val_scene_dirs(scene_dirs, config):
     '''
@@ -274,9 +87,9 @@ def train_resnet_on_scene_dirs(scene_dirs, weights_path, config, \
     val_subpatch_paths = land_cover_utils.get_subpatch_paths_for_scene_dirs(val_scene_dirs)
     # get compiled keras model
     label_encoder = land_cover_utils.get_label_encoder(config)
-    model = get_compiled_resnet(config, label_encoder, predict_continents, predict_seasons)
+    model = models.get_compiled_resnet(config, label_encoder, predict_continents, predict_seasons)
     # set up callbacks, data generators
-    callbacks = get_callbacks(weights_path, config)
+    callbacks = models.get_callbacks(weights_path, config)
     train_datagen = datagen.SubpatchDataGenerator(train_subpatch_paths, config, \
         return_labels=True)
     val_datagen = datagen.SubpatchDataGenerator(val_subpatch_paths, config, \
@@ -360,9 +173,9 @@ def train_resnet_on_season(season, config):
     model, history = train_resnet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
-def save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
+def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
     '''
-    Use FC-DenseNet model to predict on a single scene_dir
+    Use segmentation model to predict on a single scene_dir
     Store predictions in .npz file (1 file per scene)
     '''
     if os.path.exists(save_dir):
@@ -427,11 +240,11 @@ def predict_model_path_on_each_scene(model_path, label_encoder, config):
     '''
     # load model from model_path
     if 'weights' in model_path and 'resnet' in model_path:
-        model = get_compiled_resnet(config, label_encoder)
+        model = models.get_compiled_resnet(config, label_encoder)
         model.load_weights(model_path)
         mode = 'subpatches'
     elif 'weights' in model_path and 'DenseNet' in model_path:
-        model = get_compiled_fc_densenet(config, label_encoder)
+        model = models.get_compiled_fc_densenet(config, label_encoder)
         model.load_weights(model_path)
         mode = 'segmentation'
     else:
@@ -457,7 +270,7 @@ def predict_model_path_on_each_scene(model_path, label_encoder, config):
                     scene_name = scene_dir.split('/')[-1]
                     save_dir = os.path.join(config['segmentation_predictions_dir'],
                         folder, model_name, '{}-{}'.format(continent, season), scene_name)
-                    save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config)
+                    save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config)
     print('finished predictions using model_path: ', model_path)
     print()
 
@@ -480,7 +293,10 @@ def predict_model_path_on_validation_set(model_path, label_encoder, config):
     Given a weights_path for an FC-DenseNet model,
     Save predictions on each scene in the Validation set
     '''
-    model = get_compiled_fc_densenet(config, label_encoder)
+    if 'Unet' in model_path:
+        model = models.get_compiled_unet(config, label_encoder, predict_logits=False)
+    else:
+        model = models.get_compiled_fc_densenet(config, label_encoder)
     model.load_weights(model_path)
     model_name = os.path.basename(model_path).split('_weights.h5')[0]
     val_season = 'ROIs0000_validation'
@@ -492,7 +308,7 @@ def predict_model_path_on_validation_set(model_path, label_encoder, config):
         scene_name = scene_dir.split('/')[-1]
         save_dir = os.path.join(config['competition_predictions_dir'],
             model_name, val_season, scene_name)
-        save_fc_densenet_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=True)
+        save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=True)
     print('finished predictions using model_path: ', model_path)
     print()
 
@@ -507,10 +323,10 @@ def evaluate_on_single_scene(sen12ms, config, label_encoder, \
     # load model from model_path, if necessary
     if model is None:
         if 'weights' in model_path and 'resnet' in model_path:
-            model = get_compiled_resnet(config, label_encoder)
+            model = models.get_compiled_resnet(config, label_encoder)
             model.load_weights(model_path)
         elif 'weights' in model_path and 'DenseNet' in model_path:
-            model = get_compiled_fc_densenet(config, label_encoder)
+            model = models.get_compiled_fc_densenet(config, label_encoder)
             model.load_weights(model_path)
         else:
             model = load_model(model_path)
@@ -547,10 +363,10 @@ def evaluate_on_multiple_scenes(sen12ms, config, label_encoder, \
     label_encoder = land_cover_utils.get_label_encoder(config)
     if model is None:
         if 'weights' in model_path and 'resnet' in model_path:
-            model = get_compiled_resnet(config, label_encoder)
+            model = models.get_compiled_resnet(config, label_encoder)
             model.load_weights(model_path)
         elif 'weights' in model_path and 'DenseNet' in model_path:
-            model = get_compiled_fc_densenet(config, label_encoder)
+            model = models.get_compiled_fc_densenet(config, label_encoder)
             model.load_weights(model_path)
         else:
             model = load_model(model_path)
@@ -615,11 +431,12 @@ def evaluate_saved_models_on_each_season(config):
             test_seasons=seasons, test_scene_ids=scenes, \
             results_path=results_path)
 
-def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
-    predict_continents=False, predict_seasons=False):
+def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
+    predict_continents=False, predict_seasons=False, \
+    predict_logits=False):
     '''
     Input: scene_dirs, weights_path, config
-    Output: trained FC-DenseNet model (saved to disk), training history
+    Output: trained segmentation model (saved to disk), training history
     '''
     # get train, val scene dirs
     print("Performing train/val split...")
@@ -640,46 +457,21 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
     train_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(train_scene_dirs)
     val_patch_paths = land_cover_utils.get_segmentation_patch_paths_for_scene_dirs(val_scene_dirs)
     # set up callbacks, data generators
-    callbacks = get_callbacks(weights_path, config)
+    callbacks = models.get_callbacks(weights_path, config)
     save_label_counts =  config['training_params']['class_weight'] == 'balanced'
     train_datagen = datagen.SegmentationPatchDataGenerator(train_patch_paths, config, labels='dfc', \
             label_smoothing=config['training_params']['label_smoothing'], save_label_counts=save_label_counts)
     val_datagen = datagen.SegmentationPatchDataGenerator(val_patch_paths, config, labels='dfc')
-    # train_datagen = datagen.SegmentationDataGenerator(train_scene_paths, config, labels='dfc')
-    # val_datagen = datagen.SegmentationDataGenerator(val_scene_paths, config, labels='dfc')
-    # set up class balancing (and class masking)
+    # get custom loss function
     if config['training_params']['class_weight'] == 'balanced':
         print('training with balanced loss...')
         class_weights = train_datagen.get_class_weights_balanced()
     else:
         print('training with unbalanced loss...')
         class_weights = np.ones(len(label_encoder.classes_))
-    def custom_loss(onehot_labels, probs):
-        """
-        scale loss based on class weights
-        https://github.com/keras-team/keras/issues/3653#issuecomment-344068439
-        """
-        # computer weights based on onehot labels
-        weights = tf.reduce_sum(class_weights * onehot_labels, axis=-1)
-        # compute (unweighted) cross entropy loss
-        unweighted_losses = categorical_crossentropy(onehot_labels, probs)
-        # apply the weights, relying on broadcasting of the multiplication
-        weighted_losses = unweighted_losses * weights
-        # mask out '0' index
-        if len(config[f'{labels}_ignored_classes']) > 0:
-            print('ignoring 0 index in loss function')
-            mask_value = np.zeros(len(label_encoder.classes_), dtype='float32')
-            mask_value[0] = 1.0
-            mask_value = tf.Variable(mask_value)
-            mask = tf.reduce_all(tf.equal(onehot_labels, mask_value), axis=-1)
-            mask = 1 - tf.cast(mask, tf.float32)
-            weighted_losses = weighted_losses * mask
-            return tf.reduce_sum(weighted_losses) / tf.reduce_sum(mask)
-        # reduce the result to get your final loss
-        loss = tf.reduce_mean(weighted_losses)
-        return loss
+    loss = models.get_custom_loss(label_encoder, class_weights, config, from_logits=predict_logits)
     # get compiled keras model
-    model = get_compiled_fc_densenet(config, label_encoder, loss=custom_loss)
+    model = models.get_compiled_fc_densenet(config, label_encoder, loss=loss)
     # fit keras model
     print("Training keras model...")
     history = model.fit_generator(
@@ -687,7 +479,7 @@ def train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
         epochs=config['training_params']['max_epochs'],
         validation_data=val_datagen,
         callbacks=callbacks,
-        max_queue_size=config['fc_densenet_params']['batch_size'],
+        max_queue_size=config['unet_params']['batch_size'],
         use_multiprocessing=config['training_params']['use_multiprocessing'],
         workers=config['training_params']['workers']
     )
@@ -760,14 +552,14 @@ def train_fc_densenet_on_continent(continent, config, predict_continents=False, 
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
-def train_fc_densenet_on_all_scenes(config):
+def train_competition_fc_densenet(config):
     '''
     Input: config
     Output: trained DenseNet model (saved to disk), training history
     '''
     print("--- Training FC-DenseNet model on all scenes ---")
     # get filepaths
-    filename = 'sen12ms_all-scenes_label-smoothing-{}_balanced_ignore-3-8_FC-DenseNet_weights.h5'.format(config['training_params']['label_smoothing'])
+    filename = config['competition_model']
     weights_path = os.path.join(
         config['model_save_dir'],
         filename)
@@ -782,6 +574,30 @@ def train_fc_densenet_on_all_scenes(config):
     for season in config['all_seasons']:
         scene_dirs.extend(land_cover_utils.get_scene_dirs_for_season(season, config))
     model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    return model, history
+
+def train_competition_unet(config):
+    '''
+    Input: config
+    Output: trained unet model (saved to disk), training history
+    '''
+    print("--- Training Unet model on all scenes ---")
+    # get filepaths
+    filename = config['competition_model']
+    weights_path = os.path.join(
+        config['model_save_dir'],
+        filename)
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
+        return
+    # train model
+    scene_dirs = []
+    for season in config['all_seasons']:
+        scene_dirs.extend(land_cover_utils.get_scene_dirs_for_season(season, config))
+    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, predict_logits=True)
     return model, history
 
 def main(args):
@@ -803,13 +619,13 @@ def main(args):
     # show summary of keras models
     if args.model_summary:
         label_encoder = land_cover_utils.get_label_encoder(config)
-        resnet = get_compiled_resnet(config, label_encoder, predict_seasons=True)
+        resnet = models.get_compiled_resnet(config, label_encoder, predict_seasons=True)
         print('----------- RESNET MODEL SUMMARY ----------')
         #print(resnet.summary())
         print('inputs: ', resnet.inputs)
         print('outputs: ', resnet.outputs)
         print()
-        fc_densenet = get_compiled_fc_densenet(config, label_encoder, predict_seasons=True)
+        fc_densenet = models.get_compiled_fc_densenet(config, label_encoder, predict_seasons=True)
         print('---------- FC-DENSENET MODEL SUMMARY ----------')
         #print(fc_densenet.summary())
         print('inputs: ', fc_densenet.inputs)
@@ -827,13 +643,15 @@ def main(args):
         #     train_fc_densenet_on_continent(continent, config)
         # for season in config['all_seasons']:
         #     train_fc_densenet_on_season(season, config)
-        train_fc_densenet_on_all_scenes(config)
+        # train_competition_fc_densenet(config)
+        train_competition_unet(config)
     # save each model's predictions on each scene
     if args.predict:
         # predict_saved_models_on_each_scene(config)
-        # competition_model_path = os.path.join(config['model_save_dir'], 'sen12ms_all-scenes_FC-DenseNet_weights.h5')
-        competition_model_path = os.path.join(config['model_save_dir'], 'sen12ms_all-scenes_label-smoothing-0.1_FC-DenseNet_weights.h5')
-        label_encoder = land_cover_utils.get_label_encoder(config)
+        competition_model_path = os.path.join(config['model_save_dir'], config['competition_model'])
+        print(f'predicting on competition data with model {competition_model_path}')
+        label_encoder = land_cover_utils.get_label_encoder(config, labels='dfc')
+        print(f'label_encoder.classes_: {label_encoder.classes_}')
         predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
     # evaluate saved models on each season/scene
     if args.test:

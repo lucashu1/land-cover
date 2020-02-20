@@ -108,20 +108,27 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         if len(self.patch_paths) - self.patch_index < self.batch_size:
             self.on_epoch_end()
 
+        # continue getting samples until len(x_batch) == batch_size
         while len(x_batch) < self.batch_size and self.patch_index < len(self.patch_paths):
             patch_path = self.patch_paths[self.patch_index]
             self.patch_index += 1
 
             # get S1
-            s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
-            s1 = s1.squeeze()
-            if np.any(np.isnan(s1)):
-                continue
-            s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
+            if len(self.config['s1_input_bands']) > 0:
+                s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
+                s1 = s1.squeeze()
+                if np.any(np.isnan(s1)):
+                    continue
+                s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
+
             # get S2
             s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
             s2 = s2.squeeze()
-            s2 = (s2 - self.config['s2_band_means']) / self.config['s2_band_std']
+            if self.config['training_params']['normalize_mode'] == 'standardize':
+                s2 = (s2 - self.config['s2_band_means']) / self.config['s2_band_std']
+            else:
+                s2 /= self.config['s2_max_val']
+
             # get labels
             if self.labels is not None:
                 labels = np.load(os.path.join(patch_path, "{}.npy".format(self.labels)))
@@ -130,8 +137,9 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
                 assert s2.shape[0] == labels.shape[0]
 
             # check dimensions
-            assert s1.shape[0] == s1.shape[1]
-            assert s1.shape[0] == self.input_size
+            if len(self.config['s1_input_bands']) > 0:
+                assert s1.shape[0] == s1.shape[1]
+                assert s1.shape[0] == self.input_size
             assert s2.shape[0] == s2.shape[1]
             assert s2.shape[0] == self.input_size
 
@@ -148,13 +156,8 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
                     labels[labels == c] = 0
 
             # setup x
-            if self.do_color_aug:
-                x = color_aug(s2)
-                x_batch.append(color_aug(s2))
-            else:
-                x = np.concatenate((s1,s2), axis=-1)
-                # x = s2
-                x_batch.append(x)
+            x = np.concatenate((s1,s2), axis=-1) if len(self.config['s1_input_bands']) > 0 else s2
+            x_batch.append(x)
 
             if self.labels is not None:
                 # setup y (apply label-encoder)
@@ -179,6 +182,7 @@ class SegmentationPatchDataGenerator(keras.utils.Sequence):
         if self.label_smoothing is not None and self.label_smoothing > 0:
            y_batch *= (1.0-self.label_smoothing)
            y_batch += (self.label_smoothing / y_batch.shape[-1])
+
         # set ignored pixels = [1, 0, 0, ...]
         if len(self.ignored_classes) > 0:
             ignored_vec = np.zeros(self.num_classes)

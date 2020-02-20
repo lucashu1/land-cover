@@ -8,6 +8,7 @@
     "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
     "competition_predictions_dir":"/data/lucas/sen12ms_competition_predictions",
     "model_save_dir": "/home/lucas/land-cover/saved_models",
+    "competition_model": "sen12ms_all-scenes_s1-s2_label-smoothing-0.1_ignore-3-8_Unet_weights.h5",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/continents.json",
     "scene_locations_json_path":"/home/lucas/land-cover/all_scene_locations.json",
@@ -66,7 +67,7 @@
         "10": "Water"
     },
     "dfc_removed_classes": [],
-    "dfc_ignored_classes": [3, 8],
+    "dfc_ignored_classes": [3,8],
     "landuse_class_descriptions": {
         "1": "Barren",
         "2": "Permanent Snow and Ice",
@@ -99,14 +100,15 @@
         "patch_size":256,
         "subpatch_size": 64,
         "val_size": 0.05,
-        "max_epochs": 200,
+        "max_epochs": 10,
         "early_stopping_patience": 2,
         "do_color_aug": false,
         "use_multiprocessing": false,
         "workers": 1,
+        "normalize_mode": "standardize",
         "label_scheme": "dfc",
         "label_smoothing": 0.1,
-        "class_weight": null,
+        "class_weight": "imbalanced",
         "geospatial_loss_weight": 1
     },
     "lr_reducer_params": {
@@ -114,6 +116,9 @@
        "cooldown": 0,
        "patience": 5,
        "min_lr": 0.0000005
+    },
+    "kmeans_params": {
+        "kmean_path": "/home/caleb/code/lucas-land-cover/kmeans_16.p"
     },
     "resnet_params": {
         "learning_rate":0.0005,
@@ -124,5 +129,10 @@
         "learning_rate":0.0001,
         "batch_size":4,
         "nb_dense_block":3
+    },
+    "unet_params": {
+        "backbone_name": "resnet18",
+        "batch_size":4,
+        "learning_rate":0.0001
     }
 }
