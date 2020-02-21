@@ -127,8 +127,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             if len(self.config['s1_input_bands']) > 0:
                 s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
                 s1 = s1.squeeze()
-                if np.any(np.isnan(s1)):
-                    continue
+                # if np.any(np.isnan(s1)):
+                #     continue
                 s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
 
             # get S2
@@ -201,6 +201,7 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             class_probs = self.cluster_to_label_probabilities[cluster_inds]
             if len(self.ignored_classes) > 0:
                 class_probs = np.delete(class_probs, self.ignored_classes-1, axis=-1) # remove ignored classes
+                class_probs = class_probs / np.expand_dims(class_probs.sum(axis=-1), axis=-1) # re-normalize probabilities
                 class_probs = np.concatenate((np.zeros((class_probs.shape[0],1)), class_probs), axis=-1) # add dummy channel (for masking)
             class_probs = class_probs.reshape((x_batch.shape[0], self.input_size, self.input_size, -1))
             y_batch = class_probs

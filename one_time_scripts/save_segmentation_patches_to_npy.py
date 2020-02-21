@@ -124,9 +124,9 @@ def main(args):
             if not os.path.exists(val_save_dir):
                 os.makedirs(val_save_dir)
             # save (s1,s2) only (for prediction)
-            # np.save(os.path.join(val_save_dir, "s1.npy"), s2)
+            np.save(os.path.join(val_save_dir, "s1.npy"), s1)
             # np.save(os.path.join(val_save_dir, "s2.npy"), s2)
-            np.save(os.path.join(val_save_dir, "dfc.npy"), dfc)
+            # np.save(os.path.join(val_save_dir, "dfc.npy"), dfc)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Save SEN12MS patches as .npy files')
