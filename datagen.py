@@ -127,8 +127,8 @@ class SegmentationDataGenerator(keras.utils.Sequence):
             if len(self.config['s1_input_bands']) > 0:
                 s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
                 s1 = s1.squeeze()
-                # if np.any(np.isnan(s1)):
-                #     continue
+                if self.labels is not None and np.any(np.isnan(s1)):
+                    continue
                 s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
 
             # get S2
