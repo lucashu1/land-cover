@@ -15,3 +15,8 @@ Deep learning for land cover classification
 * Train models: `python classify.py -c config.json --train`
 * Generate predictions: `python classify.py -c config.json --predict`
 
+### Sentinel-2 Band Distributions (By Continent)
+![Sentinel-2 Continent Distributions](figures/continent-s2-input-distributions.png)
+
+### Sentinel-2 Band Distributions (By Season)
+![Sentinel-2 Season Distributions](figures/season-s2-input-distributions.png)
