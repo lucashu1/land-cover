@@ -269,6 +269,20 @@ def get_subpatch_paths_for_scene_dirs(scene_dirs):
         all_subpatch_paths += get_subpatch_paths_for_scene_dir(scene_dir)
     return all_subpatch_paths
 
+def patch_path_to_geo_info(patch_path):
+    ''' get (continent, season, scene_id, patch_id) from patch_path '''
+    info = patch_path.split('sen12ms_')[1]
+    continent_season, scene, patch = info.split('/')[1:4]
+    continent, season = continent_season.split('-')
+    scene_id = int(scene.split('scene_')[1])
+    patch_id = int(patch.split('patch_')[1])
+    return (continent, season, scene_id, patch_id)
+
+def geo_info_to_patch_path(dataset_dir, continent, season, scene, patch):
+    ''' get patch path from geo info '''
+    patch_path = f'{dataset_dir}/{continent}-{season}/scene_{scene}/patch_{patch}'
+    return patch_path
+
 
 
 

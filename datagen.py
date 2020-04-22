@@ -115,28 +115,35 @@ class SegmentationDataGenerator(keras.utils.Sequence):
         y_batch = []
 
         # out of patches --> call on_epoch_end to re-shuffle
-        if len(self.patch_paths) - self.patch_index < self.batch_size:
+        if self.patch_index >= len(self.patch_paths):
             self.on_epoch_end()
 
-        # continue getting samples until len(x_batch) == batch_size
+        # continue getting samples until len(x_batch) == batch_size (or until out of patches)
         while len(x_batch) < self.batch_size and self.patch_index < len(self.patch_paths):
             patch_path = self.patch_paths[self.patch_index]
             self.patch_index += 1
 
             # get S1
             if len(self.config['s1_input_bands']) > 0:
-                s1 = np.load(os.path.join(patch_path, "s1.npy")).astype(np.float32)
+                s1 = np.load(os.path.join(patch_path, "s1.npy"))
                 s1 = s1.squeeze()
                 if self.labels is not None and np.any(np.isnan(s1)):
                     continue
-                s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
+                if self.config['training_params']['normalize_mode'] == 'standardize':
+                    s1 = s1.astype(np.float32)
+                    s1 = (s1 - self.config['s1_band_means']) / self.config['s1_band_std']
+                elif self.config['training_params']['normalize_mode'] == 'max':
+                    s1 = s1.astype(np.float32)
+                    s1 = s1 / self.config['s1_band_max']
 
             # get S2
-            s2 = np.load(os.path.join(patch_path, "s2.npy")).astype(np.float32)
+            s2 = np.load(os.path.join(patch_path, "s2.npy"))
             s2 = s2.squeeze()
             if self.config['training_params']['normalize_mode'] == 'standardize':
+                s2 = s2.astype(np.float32)
                 s2 = (s2 - self.config['s2_band_means']) / self.config['s2_band_std']
-            else:
+            elif self.config['training_params']['normalize_mode'] == 'max':
+                s2 = s2.astype(np.float32)
                 s2 /= self.config['s2_max_val']
 
             # get labels
