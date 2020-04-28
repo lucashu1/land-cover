@@ -14,6 +14,7 @@ import os
 import glob
 import argparse
 import json
+import joblib
 from collections import defaultdict
 import numpy as np
 from scipy import stats
@@ -74,7 +75,7 @@ def get_competition_train_val_scene_dirs(scene_dirs, config):
 def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label_encoder, config, competition_mode=False):
     '''
     Use segmentation model to predict on a single scene_dir
-    Store predictions in .npz file (1 file per scene)
+    Store predictions in .npz file (1 file per patch)
     '''
     if os.path.exists(save_dir):
         print('save_dir {} already exists! skipping prediction'.format(save_dir))
@@ -102,11 +103,38 @@ def save_segmentation_predictions_on_scene_dir(model, scene_dir, save_dir, label
     print('saved segmentation predictions to {}'.format(save_dir))
     return predictions
 
+def save_segmentation_predictions_on_patch_paths(model, patch_paths, save_dir, label_encoder, config):
+    '''
+    Predict on list of patch_paths, store predictions in .npz file
+    save_dir: e.g. /data/lucas/sen12ms_segmentation_predictions/by_continent/{continent}/{model_name}
+    '''
+    print('Generating predictions to {}...'.format(save_dir))
+    # get datagen
+    predict_datagen = datagen.SegmentationDataGenerator(patch_paths, config, labels=None)
+    # predict
+    predictions = model.predict_generator(predict_datagen)
+    # post-process predictions
+    predictions = np.argmax(predictions, axis=-1) # output shape: (N, W, H)
+    predictions = label_encoder.inverse_transform(predictions.flatten()).reshape(predictions.shape)
+    predictions = predictions.astype('uint8')
+    # save to .npz files, indexed by patch_id (each file = predictions on 1 patch)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    for patch_path, pred in zip(patch_paths, predictions):
+        c, s, scene, patch = land_cover_utils.patch_path_to_geo_info(patch_path)
+        patch_pred_save_path = os.path.join(save_dir, f'{c}-{s}', f'scene_{scene}', f'patch_{patch}.npz')
+        if not os.path.exists(os.path.dirname(patch_pred_save_path)):
+            os.makedirs(os.path.dirname(patch_pred_save_path))
+        np.savez_compressed(patch_pred_save_path, pred)
+    print('saved segmentation predictions to {}'.format(save_dir))
+    return predictions
+
 def predict_model_path_on_each_scene(model_path, label_encoder, config):
     '''
     Given a weights_path,
     Save predictions on each scene
     '''
+    # TODO: delete this
     # load model from model_path
     if 'weights' in model_path and 'resnet' in model_path:
         print('WARNING - resnet models have been deprecated!')
@@ -136,6 +164,91 @@ def predict_model_path_on_each_scene(model_path, label_encoder, config):
     print('finished predictions using model_path: ', model_path)
     print()
 
+def predict_model_path_on_in_cluster_patches(model_path, label_encoder, image_cluster_df, config):
+    '''
+    Given a weights_path of an FC-DenseNet cluster-model,
+    Save predictions on each in-cluster patch
+    '''
+    # load model
+    model = models.get_compiled_fc_densenet(config, label_encoder)
+    model.load_weights(model_path)
+    # get model name
+    model_name = os.path.basename(model_path).split('_weights.h5')[0]
+    folder = 'by_continent' if 'continent' in model_name else 'by_season'
+    # get in-cluster patch_paths
+    cluster_index = int(model_path.split('cluster_')[-1].split('_of_')[0]) # e.g. cluster_5_of_16
+    patch_paths = land_cover_utils.get_patch_paths_in_cluster(image_cluster_df, cluster_index, config)
+    print('predict_model_path_on_in_cluster_patches - len(patch_paths): ', len(patch_paths))
+    # get save_dir for this model
+    if folder == 'by_continent':
+        continent = model_path.split('by_continent/')[-1].split('/')[0]
+        save_dir = os.path.join(config['segmentation_predictions_dir'],
+            'by_continent', continent,
+            model_name)
+    elif folder == 'by_season':
+        season = model_path.split('by_season/')[-1].split('/')[0]
+        save_dir = os.path.join(config['segmentation_predictions_dir'],
+            'by_season', season,
+            model_name)
+    print('predict_model_path_on_in_cluster_patches - save_dir: ', save_dir)
+    # save predictions to save_dir
+    save_segmentation_predictions_on_patch_paths(model, patch_paths, save_dir, label_encoder, config)
+    print('finished predictions using model_path: ', model_path)
+    print()
+
+def predict_model_path_on_all_patches(model_path, label_encoder, image_cluster_df, config):
+    '''
+    Given a weights_path of a general (non-cluster) FC-DenseNet model,
+    Save predictions on each patch in dataset
+    '''
+    # load model
+    model = models.get_compiled_fc_densenet(config, label_encoder)
+    model.load_weights(model_path)
+    # get model name
+    model_name = os.path.basename(model_path).split('_weights.h5')[0]
+    folder = 'by_continent' if 'continent' in model_name else 'by_season'
+    # get all patch_paths
+    patch_paths = land_cover_utils.get_all_patch_paths_from_df(image_cluster_df, config)
+    print('predict_model_path_on_in_cluster_patches - len(patch_paths): ', len(patch_paths))
+    # get save_dir for this model
+    if folder == 'by_continent':
+        continent = model_path.split('by_continent/')[-1].split('/')[0]
+        save_dir = os.path.join(config['segmentation_predictions_dir'],
+            'by_continent', continent,
+            model_name)
+    elif folder == 'by_season':
+        season = model_path.split('by_season/')[-1].split('/')[0]
+        save_dir = os.path.join(config['segmentation_predictions_dir'],
+            'by_season', season,
+            model_name)
+    print('predict_model_path_on_in_cluster_patches - save_dir: ', save_dir)
+    # save predictions to save_dir
+    save_segmentation_predictions_on_patch_paths(model, patch_paths, save_dir, label_encoder, config)
+    print('finished predictions using model_path: ', model_path)
+    print()
+
+def predict_saved_models(config):
+    '''
+    Load all saved models (cluster-models and general models) in model_save_dir
+    Save predictions on relevant patch_paths (in-cluster, or all)
+    Note: only works with FC-DenseNet models!
+    '''
+    # get all saved models
+    model_filepaths = glob.glob(os.path.join(config['model_save_dir'], '**/*.h5'), recursive=True)
+    print('predict_saved_models - len(model_filepaths): ', len(model_filepaths))
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    image_cluster_df = joblib.load(config['kmeans_params']['image_clusters_df_path'])
+    # get predictions of each saved model on each seasons/scene
+    for model_path in model_filepaths:
+        print('Predicting using model path: ', model_path)
+        if 'cluster' in model_path:
+            # cluster model
+            predict_model_path_on_in_cluster_patches(model_path, label_encoder, image_cluster_df, config)
+        else:
+            # general model
+            predict_model_path_on_all_patches(model_path, label_encoder, image_cluster_df, config)
+    return
+
 def predict_saved_models_on_each_scene(config):
     '''
     Load all saved models
@@ -153,7 +266,7 @@ def predict_saved_models_on_each_scene(config):
 def predict_model_path_on_validation_set(model_path, label_encoder, config):
     '''
     Given a weights_path for an FC-DenseNet model,
-    Save predictions on each scene in the Validation set
+    Save predictions on each scene in the IEEE competition Validation set
     '''
     if 'unet' in model_path.lower():
         model = models.get_compiled_unet(config, label_encoder, predict_logits=True)
@@ -174,8 +287,59 @@ def predict_model_path_on_validation_set(model_path, label_encoder, config):
     print('finished predictions using model_path: ', model_path)
     print()
 
+def train_segmentation_model_on_patch_paths(patch_paths, weights_path, config):
+    '''
+    Input: patch_paths, weights_path, config
+    Output: trained segmentation model (saved to disk), training history
+    '''
+    # get train-val split
+    train_patch_paths, val_patch_paths = get_train_val_scene_dirs(patch_paths, config)
+    print('num. training images: ', len(train_patch_paths))
+    print('num. validation images: ', len(val_patch_paths))
+
+    # save train-val-split
+    train_split_filepath = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    with open(train_split_filepath, 'w') as f:
+        train_split = {
+            'train_scene_dirs': train_patch_paths,
+            'val_scene_dirs': val_patch_paths,
+        }
+        json.dump(train_split, f, indent=4)
+
+    # get datagen
+    train_datagen_labels = config['training_params']['label_smoothing']
+    train_datagen = datagen.SegmentationDataGenerator(train_patch_paths, config, labels=train_datagen_labels)
+    val_datagen = datagen.SegmentationDataGenerator(val_patch_paths, config, labels='onehot')
+
+    # get compiled model
+    print('getting compiled densenet model...')
+    label_encoder = land_cover_utils.get_label_encoder(config)
+    loss = 'categorical_crossentropy'
+    batch_size = config['fc_densenet_params']['batch_size']
+    model = models.get_compiled_fc_densenet(config, label_encoder, loss=loss)
+
+    # fit keras model
+    print("Training keras model...")
+    callbacks = models.get_callbacks(weights_path, config)
+    history = model.fit_generator(
+        train_datagen,
+        epochs=config['training_params']['max_epochs'],
+        validation_data=val_datagen,
+        callbacks=callbacks,
+        max_queue_size=batch_size,
+        use_multiprocessing=config['training_params']['use_multiprocessing'],
+        workers=config['training_params']['workers']
+    )
+    history = land_cover_utils.make_history_json_serializable(history.history)
+
+    # save model history
+    history_filepath = weights_path.split('_weights.h5')[0] + '_history.json'
+    with open(history_filepath, 'w') as f:
+        json.dump(history, f, indent=4)
+    print("Model history saved to: ", history_filepath)
+    return model, history
+
 def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
-    predict_continents=False, predict_seasons=False, \
     competition_mode=False, \
     predict_logits=False):
     '''
@@ -260,24 +424,18 @@ def train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config, \
     print("Model history saved to: ", history_filepath)
     return model, history
 
-def train_fc_densenet_on_season(season, config, predict_continents=False, predict_seasons=False):
+def train_fc_densenet_on_season(season, config):
     '''
     Input: continent, config
     Output: trained DenseNet model (saved to disk), training history
     '''
     print("--- Training FC-DenseNet model on {} ---".format(season))
     # get filepaths
-    if not predict_continents and not predict_seasons:
-        filename = 'sen12ms_season_{}_FC-DenseNet_weights.h5'.format(season)
-    elif predict_continents and not predict_seasons:
-        filename = 'sen12ms_season_{}_FC-DenseNet_predict-continents_weights.h5'.format(season)
-    elif predict_seasons and not predict_continents:
-        filename = 'sen12ms_season_{}_FC-DenseNet_predict-seasons_weights.h5'.format(season)
-    else:
-        filename = 'sen12ms_season_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(season)
+    filename = 'sen12ms_season_{}_FC-DenseNet_weights.h5'.format(season)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_season',
+        season,
         filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
@@ -287,28 +445,21 @@ def train_fc_densenet_on_season(season, config, predict_continents=False, predic
         return
     # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_season(season, config, mode='segmentation')
-    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config, \
-        predict_continents, predict_seasons)
+    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
 
-def train_fc_densenet_on_continent(continent, config, predict_continents=False, predict_seasons=False):
+def train_fc_densenet_on_continent(continent, config):
     '''
-    Input: season, config
+    Input: continent, config
     Output: trained DenseNet model (saved to disk), training history
     '''
     print("--- Training FC-DenseNet model on {} ---".format(continent))
     # get filepaths
-    if not predict_continents and not predict_seasons:
-        filename = 'sen12ms_continent_{}_FC-DenseNet_weights.h5'.format(continent)
-    elif predict_continents and not predict_seasons:
-        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-continents_weights.h5'.format(continent)
-    elif predict_seasons and not predict_continents:
-        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-seasons_weights.h5'.format(continent)
-    else:
-        filename = 'sen12ms_continent_{}_FC-DenseNet_predict-continents-seasons_weights.h5'.format(continent)
+    filename = 'sen12ms_continent_{}_FC-DenseNet_weights.h5'.format(continent)
     weights_path = os.path.join(
         config['model_save_dir'],
         'by_continent',
+        continent,
         filename)
     history_path = weights_path.split('_weights.h5')[0] + '_history.json'
     train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
@@ -318,8 +469,50 @@ def train_fc_densenet_on_continent(continent, config, predict_continents=False, 
         return
     # train model
     scene_dirs = land_cover_utils.get_scene_dirs_for_continent(continent, config, mode='segmentation')
-    model, history = train_fc_densenet_on_scene_dirs(scene_dirs, weights_path, config)
+    model, history = train_segmentation_model_on_scene_dirs(scene_dirs, weights_path, config)
     return model, history
+
+def train_fc_densenet_on_continent_cluster(continent, cluster_index, config):
+    '''
+    Input: continent, cluster_index, config
+    Output: trained DenseNet model (saved to disk), training history)
+    '''
+    num_image_clusters = config['kmeans_params']['num_image_clusters']
+    print("--- Training FC-DenseNet model on {}, Cluster {} (of {}) ---".format(continent, cluster_index, num_image_clusters))
+    image_cluster_df = joblib.load(config['kmeans_params']['image_clusters_df_path'])
+    # get patch paths associated with this (continent, cluster)
+    patch_paths = land_cover_utils.get_patch_paths_in_cluster(image_cluster_df, cluster_index, config, continent)
+    if len(patch_paths) == 0:
+        print(f'{continent} has no images with cluster_index {cluster_index}! skipping training')
+        return
+    # get weights-path
+    num_image_clusters = config['kmeans_params']['num_image_clusters']
+    filename = 'sen12ms_continent_{}_cluster_{}_of_{}_FC-DenseNet_weights.h5'.format(continent, cluster_index, num_image_clusters)
+    weights_path = os.path.join(
+        config['model_save_dir'],
+        'by_continent',
+        continent,
+        filename)
+    history_path = weights_path.split('_weights.h5')[0] + '_history.json'
+    train_split_path = weights_path.split('_weights.h5')[0] + '_train-val-split.json'
+    # check if model exists
+    if os.path.exists(weights_path) and os.path.exists(history_path) and os.path.exists(train_split_path):
+        print('files for model {} already exist! skipping training'.format(weights_path))
+        return
+    # train model
+    model, history = train_segmentation_model_on_patch_paths(patch_paths, weights_path, config)
+    # save history
+    return model, history
+
+def train_fc_densenets_per_cluster_in_continent(continent, config):
+    '''
+    Input: continent, config
+    Train DenseNet model on each cluster-index, for given continent
+    '''
+    num_image_clusters = config['kmeans_params']['num_image_clusters']
+    for i in range(num_image_clusters):
+        train_fc_densenet_on_continent_cluster(continent, i, config)
+    return
 
 def train_competition_fc_densenet(config):
     '''
@@ -394,7 +587,7 @@ def main(args):
 
     # show summary of keras models
     if args.model_summary:
-        fc_densenet = models.get_compiled_fc_densenet(config, label_encoder, predict_seasons=True)
+        fc_densenet = models.get_compiled_fc_densenet(config, label_encoder)
         print('---------- FC-DENSENET MODEL SUMMARY ----------')
         #print(fc_densenet.summary())
         print('inputs: ', fc_densenet.inputs)
@@ -403,23 +596,25 @@ def main(args):
 
     # train new models on all seasons/continents
     if args.train:
-        # # train densenet models
-        # for continent in config['all_continents']:
-        #     train_fc_densenet_on_continent(continent, config)
+        # train densenet models
+        for continent in config['all_continents']:
+            train_fc_densenets_per_cluster_in_continent(continent, config)
+            train_fc_densenet_on_continent(continent, config)
         # for season in config['all_seasons']:
         #     train_fc_densenet_on_season(season, config)
         # train_competition_fc_densenet(config)
-        train_competition_unet(config)
+        # train_competition_unet(config)
 
     # save each model's predictions on each scene
     if args.predict:
+        predict_saved_models(config)
         # predict_saved_models_on_each_scene(config)
-        competition_model_path = os.path.join(config['model_save_dir'], 
-            'competition', 
-            config['competition_model'])
-        print(f'predicting on competition data with model {competition_model_path}')
-        print(f'label_encoder.classes_: {label_encoder.classes_}')
-        predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
+        # competition_model_path = os.path.join(config['model_save_dir'], 
+        #     'competition', 
+        #     config['competition_model'])
+        # print(f'predicting on competition data with model {competition_model_path}')
+        # print(f'label_encoder.classes_: {label_encoder.classes_}')
+        # predict_model_path_on_validation_set(competition_model_path, label_encoder, config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train or test land-cover model(s)')

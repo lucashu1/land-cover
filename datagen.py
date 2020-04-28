@@ -35,7 +35,6 @@ class SegmentationDataGenerator(keras.utils.Sequence):
         patch_paths: list of patch paths (without .npy extension)
         labels: one of 'kmeans', 'naive', 'onehot', or None
         '''
-
         self.config = config
         self.labels = labels
         self.label_scheme = config['training_params']['label_scheme']

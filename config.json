@@ -113,7 +113,7 @@
         "val_split_seed": 10
     },
     "training_params": {
-        "gpu_id":"0",
+        "gpu_id":"1",
         "patch_size":256,
         "subpatch_size": 64,
         "val_size": 0.05,
@@ -123,9 +123,9 @@
         "use_multiprocessing": false,
         "workers": 1,
         "normalize_mode": "standardize",
-        "label_scheme": "dfc",
-        "label_smoothing": "kmeans",
-        "label_smoothing_factor": 0.1,
+        "label_scheme": "landuse",
+        "label_smoothing": "onehot",
+        "label_smoothing_factor": 0,
         "class_weight": "imbalanced",
         "geospatial_loss_weight": 1
     },
@@ -136,7 +136,11 @@
        "min_lr": 0.0000005
     },
     "kmeans_params": {
-        "kmeans_path": "/home/lucas/land-cover/kmeans/kmeans_16.p"
+        "kmeans_path": "kmeans_16.p",
+        "num_image_clusters": 16,
+        "image_kmeans_path": "/home/lucas/land-cover/kmeans/kmeans_image_batch_bandmeans_16.joblib",
+        "image_clusters_df_path": "/data/lucas/kmeans/image_clusters_df_20200416.joblib",
+        "df_cluster_col": "image_cluster_bandmeans_16"
     },
     "resnet_params": {
         "learning_rate":0.0005,

@@ -9,7 +9,6 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from skimage.util.shape import view_as_blocks
 from scipy import stats
-import keras
 from sen12ms_dataLoader import SEN12MSDataset, \
     Seasons, Sensor, S1Bands, S2Bands, LCBands
 
@@ -283,8 +282,33 @@ def geo_info_to_patch_path(dataset_dir, continent, season, scene, patch):
     patch_path = f'{dataset_dir}/{continent}-{season}/scene_{scene}/patch_{patch}'
     return patch_path
 
+def get_patch_paths_in_cluster(image_cluster_df, cluster_index, config, continent=None):
+    ''' get list of patch paths in cluster (and continent) '''
+    cluster_col = config['kmeans_params']['df_cluster_col']
+    if continent == None:
+        in_continent_cluster = image_cluster_df.loc[image_cluster_df[cluster_col] == cluster_index]
+    else:
+        in_continent_cluster = image_cluster_df.loc[(image_cluster_df['continent'] == continent) & \
+            (image_cluster_df[cluster_col] == cluster_index)]
+    patch_paths = []
+    for row in in_continent_cluster.itertuples(index=False, name='Patch'):
+        continent, season, scene, patch = getattr(row, 'continent'), getattr(row, 'season'), \
+            getattr(row, 'scene_id'), getattr(row, 'patch_id')
+        patch_path = geo_info_to_patch_path(config['segmentation_dataset_dir'], \
+            continent, season, scene, patch)
+        patch_paths.append(patch_path)
+    return patch_paths
 
-
+def get_all_patch_paths_from_df(image_cluster_df, config):
+    ''' get all patch_paths from image_cluster_df '''
+    patch_paths = []
+    for row in image_cluster_df.itertuples(index=False, name='Patch'):
+        continent, season, scene, patch = getattr(row, 'continent'), getattr(row, 'season'), \
+            getattr(row, 'scene_id'), getattr(row, 'patch_id')
+        patch_path = geo_info_to_patch_path(config['segmentation_dataset_dir'], \
+            continent, season, scene, patch)
+        patch_paths.append(patch_path)
+    return patch_paths
 
 
 
