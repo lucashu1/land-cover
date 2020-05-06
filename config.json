@@ -8,7 +8,7 @@
     "segmentation_predictions_dir":"/data/lucas/sen12ms_segmentation_predictions",
     "competition_predictions_dir":"/data/lucas/sen12ms_competition_predictions",
     "competition_holdout_scenes":"/home/lucas/land-cover/supp_data/competition_holdout_scenes.csv",
-    "model_save_dir": "/home/lucas/land-cover/saved_models",
+    "model_save_dir": "/data/lucas/saved_models",
     "competition_model": "sen12ms_all-scenes_s1-s2_kmeans-label-smoothing_ignore-3-8_unet_weights.h5",
     "results_dir": "/home/lucas/land-cover/results",
     "continents_json_path":"/home/lucas/land-cover/supp_data/continents.json",

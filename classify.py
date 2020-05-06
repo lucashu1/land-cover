@@ -190,9 +190,13 @@ def predict_model_path_on_in_cluster_patches(model_path, label_encoder, image_cl
         save_dir = os.path.join(config['segmentation_predictions_dir'],
             'by_season', season,
             model_name)
+    if os.path.exists(os.path.join(save_dir, 'done.txt')):
+        print(f'predict_model_path_on_in_cluster_patches - {save_dir}/done.txt already exists! skipping predictions')
+        return
     print('predict_model_path_on_in_cluster_patches - save_dir: ', save_dir)
     # save predictions to save_dir
     save_segmentation_predictions_on_patch_paths(model, patch_paths, save_dir, label_encoder, config)
+    open(os.path.join(save_dir, 'done.txt'), 'w').close() # place a 'done' marker
     print('finished predictions using model_path: ', model_path)
     print()
 
@@ -221,9 +225,13 @@ def predict_model_path_on_all_patches(model_path, label_encoder, image_cluster_d
         save_dir = os.path.join(config['segmentation_predictions_dir'],
             'by_season', season,
             model_name)
-    print('predict_model_path_on_in_cluster_patches - save_dir: ', save_dir)
+    if os.path.exists(os.path.join(save_dir, 'done.txt')):
+        print(f'predict_model_path_on_in_cluster_patches - {save_dir}/done.txt already exists! skipping predictions')
+        return
+    print('predict_model_path_on_in_cluster_patches - saving predictions to save_dir: ', save_dir)
     # save predictions to save_dir
     save_segmentation_predictions_on_patch_paths(model, patch_paths, save_dir, label_encoder, config)
+    open(os.path.join(save_dir, 'done.txt'), 'w').close() # place a 'done' marker
     print('finished predictions using model_path: ', model_path)
     print()
 
@@ -608,7 +616,6 @@ def main(args):
     # save each model's predictions on each scene
     if args.predict:
         predict_saved_models(config)
-        # predict_saved_models_on_each_scene(config)
         # competition_model_path = os.path.join(config['model_save_dir'], 
         #     'competition', 
         #     config['competition_model'])
