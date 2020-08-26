@@ -1,5 +1,5 @@
 # land-cover
-Deep learning for land cover classification
+Code for paper "Model Generalization in Deep Learning Applications for Land Cover Mapping": https://arxiv.org/abs/2008.10351
 
 ### Setup Instructions
 1. `git clone` this repository
