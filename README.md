@@ -1,5 +1,5 @@
 # land-cover
-Code for "Model Generalization in Deep Learning Applications for Land Cover Mapping" (https://arxiv.org/abs/2008.10351)
+Code for "Lucas Hu, Caleb Robinson, and Bistra Dilkina. 2021. Model Generalization in Deep Learning Applications for Land Cover Mapping. In Fragile Earth ’21: KDD 2021 Workshop. ACM, New York, NY, USA, 9 pages." (https://arxiv.org/abs/2008.10351)
 
 ### Setup Instructions
 1. `git clone` this repository
